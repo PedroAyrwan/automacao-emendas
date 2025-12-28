@@ -11,14 +11,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- CONFIGURAÇÕES DE E-MAIL (Blindadas) ---
-# Agora ele busca dentro do arquivo .env, não fica escrito aqui
 EMAIL_REMETENTE = os.getenv("EMAIL_REMETENTE")
 SENHA_EMAIL = os.getenv("SENHA_EMAIL")
 EMAIL_DESTINATARIO = os.getenv("EMAIL_DESTINATARIO")
 
 # --- CONFIGURAÇÕES DO PROJETO ---
-# Link direto do CSV do Tesouro Transparente (Emendas Parlamentares)
-URL_CSV = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/1Do1s1cAMxeEMNyV87etGV5L8jxwAp4ermInaUR74bVs"
+# Link ATUALIZADO (CSV do Tesouro Transparente)
+URL_CSV = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
 MUNICIPIO_ALVO = "Canindé de São Francisco"
@@ -38,13 +37,15 @@ def enviar_email(assunto, mensagem):
             server.send_message(msg)
         print(f"📧 E-mail de aviso enviado: {assunto}")
     except Exception as e:
-        print(f"❌ Não foi possível enviar e-mail: {e}")
+        # Aqui usamos str(e) para evitar o erro de bytes
+        print(f"❌ Não foi possível enviar e-mail: {str(e)}")
 
 def executar_tarefa():
     """Baixa os dados, filtra e atualiza a planilha"""
     print("--- 1. Baixando e Lendo CSV do Governo (Isso pode demorar)... ---")
     
     # settings para ler o CSV brasileiro (latin1 e ponto e vírgula)
+    # on_bad_lines='skip' ignora linhas quebradas que o governo às vezes deixa
     df = pd.read_csv(URL_CSV, encoding='latin1', sep=';', on_bad_lines='skip')
     
     print(f"--- 2. Filtrando dados para: {MUNICIPIO_ALVO} - {UF_ALVO}... ---")
@@ -95,9 +96,11 @@ while tentativa <= MAX_TENTATIVAS:
         
     except Exception as e:
         # Se der erro (Internet, Site do governo fora, etc)
-        print(f"❌ Erro na tentativa {tentativa}: {e}")
+        # CORREÇÃO CRÍTICA: Convertemos 'e' para string com str(e)
+        erro_texto = str(e)
+        print(f"❌ Erro na tentativa {tentativa}: {erro_texto}")
         
-        msg_erro = f"Ocorreu um erro ao tentar atualizar a planilha:\n\n{e}\n\nVou tentar de novo em 1 hora..."
+        msg_erro = f"Ocorreu um erro ao tentar atualizar a planilha:\n\n{erro_texto}\n\nVou tentar de novo em 1 hora..."
         enviar_email(f"⚠️ Alerta de Erro (Tentativa {tentativa})", msg_erro)
         
         if tentativa == MAX_TENTATIVAS:
