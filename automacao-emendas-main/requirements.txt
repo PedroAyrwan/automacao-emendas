@@ -1,3 +1,4 @@
-EMAIL_REMETENTE=pedroayrwan2@gmail.com
-SENHA_EMAIL=KDWVLQJAIHAWLADU
-EMAIL_DESTINATARIO=pedroayrwan2@gmail.com
+pandas
+gspread
+oauth2client
+python-dotenv
