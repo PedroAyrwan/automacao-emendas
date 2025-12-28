@@ -20,18 +20,20 @@ jobs:
           python-version: '3.9'
 
       - name: Instalar bibliotecas
+        # O arquivo requirements está dentro da pasta, então avisamos o pip
         run: |
-          pip install -r requirements.txt
+          pip install -r automacao-emendas-main/requirements.txt
 
       - name: Criar arquivo de credenciais
-        # Cria o arquivo json temporário usando o segredo guardado no GitHub
-        run: echo '${{ secrets.CREDENTIALS_JSON }}' > credentials.json
+        # Criamos o json DENTRO da pasta onde o script está
+        run: echo '${{ secrets.CREDENTIALS_JSON }}' > automacao-emendas-main/credentials.json
 
       - name: Rodar o script
-        # Aqui injetamos as variáveis de ambiente que o script novo exige
         env:
           EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
           SENHA_EMAIL: ${{ secrets.SENHA_EMAIL }}
           EMAIL_DESTINATARIO: ${{ secrets.EMAIL_DESTINATARIO }}
-        # IMPORTANTE: Atualizei o nome para o novo nome sem acentos
-        run: python automacao_emenda.py
+        # Entramos na pasta (cd) e DEPOIS rodamos o Python
+        run: |
+          cd automacao-emendas-main
+          python automacao_emenda.py
