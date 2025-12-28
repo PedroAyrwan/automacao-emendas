@@ -7,110 +7,88 @@ import time
 import os
 from dotenv import load_dotenv
 
-# --- CARREGA AS SENHAS DO ARQUIVO .ENV (SEGURANÇA) ---
+# --- CARREGA AS SENHAS ---
 load_dotenv()
 
-# --- CONFIGURAÇÕES DE E-MAIL (Blindadas) ---
-EMAIL_REMETENTE = os.getenv("EMAIL_REMETENTE")
-SENHA_EMAIL = os.getenv("SENHA_EMAIL")
-EMAIL_DESTINATARIO = os.getenv("EMAIL_DESTINATARIO")
+# --- LIMPEZA DE SENHAS (Remove espaços invisíveis) ---
+def limpar_senha(valor):
+    if valor is None:
+        return ""
+    return str(valor).strip()
 
-# --- CONFIGURAÇÕES DO PROJETO ---
-# Link ATUALIZADO (CSV do Tesouro Transparente)
+EMAIL_REMETENTE = limpar_senha(os.getenv("EMAIL_REMETENTE"))
+SENHA_EMAIL = limpar_senha(os.getenv("SENHA_EMAIL"))
+EMAIL_DESTINATARIO = limpar_senha(os.getenv("EMAIL_DESTINATARIO"))
+
+# --- CONFIGURAÇÕES ---
 URL_CSV = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
-
 CREDENCIAIS_JSON = 'credentials.json'
 MUNICIPIO_ALVO = "Canindé de São Francisco"
 UF_ALVO = "SE"
 
+def debug_secrets():
+    """Mostra no log se as senhas foram lidas (SEM MOSTRAR A SENHA REAL)"""
+    print("\n--- 🕵️ DIAGNÓSTICO DE SENHAS ---")
+    print(f"1. Remetente: '{EMAIL_REMETENTE}' (Tamanho: {len(EMAIL_REMETENTE)})")
+    print(f"2. Destinatário: '{EMAIL_DESTINATARIO}' (Tamanho: {len(EMAIL_DESTINATARIO)})")
+    # Não mostramos a senha, apenas se ela existe
+    tem_senha = "SIM" if len(SENHA_EMAIL) > 0 else "NÃO"
+    print(f"3. Senha Configurada? {tem_senha}")
+    print("----------------------------------\n")
+
 def enviar_email(assunto, mensagem):
-    """Envia e-mail avisando sobre sucesso ou erro"""
     try:
-        msg = MIMEText(mensagem)
+        # Debug antes de enviar
+        if not EMAIL_REMETENTE or not SENHA_EMAIL:
+            print("⚠️ Pulei o e-mail: Faltam configurações (Veja o diagnóstico acima).")
+            return
+
+        msg = MIMEText(mensagem, 'plain', 'utf-8')
         msg['Subject'] = assunto
         msg['From'] = EMAIL_REMETENTE
         msg['To'] = EMAIL_DESTINATARIO
 
-        # Conexão segura com o Gmail
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(EMAIL_REMETENTE, SENHA_EMAIL)
             server.send_message(msg)
-        print(f"📧 E-mail de aviso enviado: {assunto}")
+        print(f"📧 E-mail enviado: {assunto}")
     except Exception as e:
-        # Aqui usamos str(e) para evitar o erro de bytes
-        print(f"❌ Não foi possível enviar e-mail: {str(e)}")
+        print(f"❌ Erro ao enviar e-mail: {str(e)}")
 
 def executar_tarefa():
-    """Baixa os dados, filtra e atualiza a planilha"""
-    print("--- 1. Baixando e Lendo CSV do Governo (Isso pode demorar)... ---")
+    # Roda o diagnóstico primeiro
+    debug_secrets()
     
-    # settings para ler o CSV brasileiro (latin1 e ponto e vírgula)
-    # on_bad_lines='skip' ignora linhas quebradas que o governo às vezes deixa
+    print("--- 1. Baixando CSV... ---")
     df = pd.read_csv(URL_CSV, encoding='latin1', sep=';', on_bad_lines='skip')
     
-    print(f"--- 2. Filtrando dados para: {MUNICIPIO_ALVO} - {UF_ALVO}... ---")
-    
-    # Filtro inteligente: verifica se as colunas existem antes de filtrar
-    coluna_municipio = 'Nome Ente' if 'Nome Ente' in df.columns else df.columns[0] # Tenta adivinhar
+    print(f"--- 2. Filtrando {MUNICIPIO_ALVO}... ---")
+    coluna_municipio = 'Nome Ente' if 'Nome Ente' in df.columns else df.columns[0]
     coluna_uf = 'UF' if 'UF' in df.columns else df.columns[1]
 
-    df_filtrado = df[
-        (df[coluna_municipio] == MUNICIPIO_ALVO) & 
-        (df[coluna_uf] == UF_ALVO)
-    ]
-    
+    df_filtrado = df[(df[coluna_municipio] == MUNICIPIO_ALVO) & (df[coluna_uf] == UF_ALVO)]
     qtd_linhas = len(df_filtrado)
     print(f"✅ Linhas encontradas: {qtd_linhas}")
 
-    print("--- 3. Enviando para o Google Sheets... ---")
+    print("--- 3. Google Sheets... ---")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     client = gspread.authorize(creds)
     
-    # Abre a planilha EXATA pelo nome (Mais seguro e funciona sempre)
-    planilha = client.open("Robo_Caninde").sheet1
-    
-    # Limpa o que tinha antes e coloca os dados novos
+    planilha = client.open("Robo_Caninde").sheet1 
     planilha.clear()
-    # Adiciona o cabeçalho + os dados
     planilha.update([df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     
     return qtd_linhas
 
-# --- LOOP DE BLINDAGEM (Tenta 5 vezes se der erro) ---
-MAX_TENTATIVAS = 5
-tentativa = 1
+# --- LOOP PRINCIPAL ---
+debug_secrets() # Testa log logo no começo
+try:
+    total = executar_tarefa()
+    enviar_email("✅ Sucesso Robô", f"Planilha atualizada com {total} linhas.")
+    print("--- FIM: SUCESSO ---")
+except Exception as e:
+    print(f"❌ ERRO FATAL: {str(e)}")
+    enviar_email("⚠️ Erro no Robô", f"Erro: {str(e)}")
 
-while tentativa <= MAX_TENTATIVAS:
-    try:
-        print(f"\n🔄 Tentativa {tentativa} de {MAX_TENTATIVAS}...")
-        
-        # Roda a função principal
-        total = executar_tarefa()
-        
-        # Se chegou aqui, deu certo!
-        msg_sucesso = f"O robô rodou com sucesso!\n\nMunicípio: {MUNICIPIO_ALVO}\nLinhas atualizadas: {total}"
-        enviar_email("✅ Sucesso: Planilha Atualizada", msg_sucesso)
-        print("\n--- FIM: Processo concluído com sucesso ---")
-        break # Sai do loop e encerra o script
-        
-    except Exception as e:
-        # Se der erro (Internet, Site do governo fora, etc)
-        # CORREÇÃO CRÍTICA: Convertemos 'e' para string com str(e)
-        erro_texto = str(e)
-        print(f"❌ Erro na tentativa {tentativa}: {erro_texto}")
-        
-        msg_erro = f"Ocorreu um erro ao tentar atualizar a planilha:\n\n{erro_texto}\n\nVou tentar de novo em 1 hora..."
-        enviar_email(f"⚠️ Alerta de Erro (Tentativa {tentativa})", msg_erro)
-        
-        if tentativa == MAX_TENTATIVAS:
-            print("❌ Todas as tentativas falharam.")
-            enviar_email("❌ FALHA CRÍTICA", "O robô tentou 5 vezes e não conseguiu atualizar os dados.")
-        else:
-            print("⏳ Aguardando 1 hora antes de tentar de novo...")
-            time.sleep(3600) # 3600 segundos = 1 hora
-            
-        tentativa += 1
-
-
-        # Forcando atualizacao de senha
+# Forçando mudança no arquivo para o Git: Versão Debug 2.0
