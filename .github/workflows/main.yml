@@ -36,4 +36,4 @@ jobs:
         # Entramos na pasta (cd) e DEPOIS rodamos o Python
         run: |
           cd automacao-emendas-main
-          python automacao_emenda.py
+          python -u automacao_emenda.py
