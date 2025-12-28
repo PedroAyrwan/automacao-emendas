@@ -91,4 +91,3 @@ except Exception as e:
     print(f"❌ ERRO FATAL: {str(e)}")
     enviar_email("⚠️ Erro no Robô", f"Erro: {str(e)}")
 
-# Forçando mudança no arquivo para o Git: Versão Debug 2.0
