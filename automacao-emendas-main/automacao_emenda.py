@@ -111,3 +111,6 @@ while tentativa <= MAX_TENTATIVAS:
             time.sleep(3600) # 3600 segundos = 1 hora
             
         tentativa += 1
+
+
+        # Forcando atualizacao de senha
