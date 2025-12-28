@@ -5,89 +5,126 @@ import smtplib
 from email.mime.text import MIMEText
 import time
 import os
+import requests
+from io import StringIO
 from dotenv import load_dotenv
 
-# --- CARREGA AS SENHAS ---
+# --- CONFIGURAÇÕES INICIAIS ---
 load_dotenv()
 
-# --- LIMPEZA DE SENHAS (Remove espaços invisíveis) ---
 def limpar_senha(valor):
-    if valor is None:
-        return ""
+    if valor is None: return ""
     return str(valor).strip()
 
 EMAIL_REMETENTE = limpar_senha(os.getenv("EMAIL_REMETENTE"))
 SENHA_EMAIL = limpar_senha(os.getenv("SENHA_EMAIL"))
 EMAIL_DESTINATARIO = limpar_senha(os.getenv("EMAIL_DESTINATARIO"))
 
-# --- CONFIGURAÇÕES ---
-URL_CSV = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
+# --- LINKS DOS ARQUIVOS ---
+URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
+URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
+
 CREDENCIAIS_JSON = 'credentials.json'
-MUNICIPIO_ALVO = "Canindé de São Francisco"
-UF_ALVO = "SE"
+NOME_PLANILHA_GOOGLE = "Robo_Caninde"
 
-def debug_secrets():
-    """Mostra no log se as senhas foram lidas (SEM MOSTRAR A SENHA REAL)"""
-    print("\n--- 🕵️ DIAGNÓSTICO DE SENHAS ---")
-    print(f"1. Remetente: '{EMAIL_REMETENTE}' (Tamanho: {len(EMAIL_REMETENTE)})")
-    print(f"2. Destinatário: '{EMAIL_DESTINATARIO}' (Tamanho: {len(EMAIL_DESTINATARIO)})")
-    # Não mostramos a senha, apenas se ela existe
-    tem_senha = "SIM" if len(SENHA_EMAIL) > 0 else "NÃO"
-    print(f"3. Senha Configurada? {tem_senha}")
-    print("----------------------------------\n")
-
+# --- FUNÇÃO DE E-MAIL ---
 def enviar_email(assunto, mensagem):
+    if not EMAIL_REMETENTE or not SENHA_EMAIL:
+        print("⚠️ E-mail não configurado. Pulei o envio.")
+        return
     try:
-        # Debug antes de enviar
-        if not EMAIL_REMETENTE or not SENHA_EMAIL:
-            print("⚠️ Pulei o e-mail: Faltam configurações (Veja o diagnóstico acima).")
-            return
-
         msg = MIMEText(mensagem, 'plain', 'utf-8')
         msg['Subject'] = assunto
         msg['From'] = EMAIL_REMETENTE
         msg['To'] = EMAIL_DESTINATARIO
-
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(EMAIL_REMETENTE, SENHA_EMAIL)
             server.send_message(msg)
         print(f"📧 E-mail enviado: {assunto}")
     except Exception as e:
-        print(f"❌ Erro ao enviar e-mail: {str(e)}")
+        print(f"❌ Erro no e-mail: {str(e)}")
 
-def executar_tarefa():
-    # Roda o diagnóstico primeiro
-    debug_secrets()
-    
-    print("--- 1. Baixando CSV... ---")
-    df = pd.read_csv(URL_CSV, encoding='latin1', sep=';', on_bad_lines='skip')
-    
-    print(f"--- 2. Filtrando {MUNICIPIO_ALVO}... ---")
-    coluna_municipio = 'Nome Ente' if 'Nome Ente' in df.columns else df.columns[0]
-    coluna_uf = 'UF' if 'UF' in df.columns else df.columns[1]
-
-    df_filtrado = df[(df[coluna_municipio] == MUNICIPIO_ALVO) & (df[coluna_uf] == UF_ALVO)]
-    qtd_linhas = len(df_filtrado)
-    print(f"✅ Linhas encontradas: {qtd_linhas}")
-
-    print("--- 3. Google Sheets... ---")
+# --- CONEXÃO COM GOOGLE SHEETS ---
+def conectar_google():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     client = gspread.authorize(creds)
+    return client.open(NOME_PLANILHA_GOOGLE)
+
+# --- TAREFA 1: ATUALIZAR EMENDAS (Aba "emendas") ---
+def tarefa_emendas(planilha_google):
+    print("\n--- 1. Processando Emendas Parlamentares... ---")
+    df = pd.read_csv(URL_EMENDAS, encoding='latin1', sep=';', on_bad_lines='skip')
     
-    planilha = client.open("Robo_Caninde").sheet1 
-    planilha.clear()
-    planilha.update([df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
+    municipio = "Canindé de São Francisco"
+    uf = "SE"
+    col_mun = 'Nome Ente' if 'Nome Ente' in df.columns else df.columns[0]
+    col_uf = 'UF' if 'UF' in df.columns else df.columns[1]
     
-    return qtd_linhas
+    df_filtrado = df[(df[col_mun] == municipio) & (df[col_uf] == uf)]
+    linhas = len(df_filtrado)
+    
+    # MUDANÇA AQUI: Busca pela aba "emendas"
+    nome_aba = "emendas"
+    try:
+        aba = planilha_google.worksheet(nome_aba)
+    except:
+        print(f"ℹ️ Aba '{nome_aba}' não encontrada. Criando nova...")
+        aba = planilha_google.add_worksheet(title=nome_aba, rows=1000, cols=20)
+    
+    aba.clear()
+    aba.update([df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
+    print(f"✅ Aba '{nome_aba}' atualizada: {linhas} linhas.")
+    return linhas
+
+# --- TAREFA 2: ATUALIZAR RECEITAS (Aba "Receitas_2025") ---
+def tarefa_receitas(planilha_google):
+    print("\n--- 2. Processando Receitas 2025... ---")
+    
+    response = requests.get(URL_RECEITAS)
+    response.raise_for_status()
+    
+    csv_data = StringIO(response.content.decode('latin1'))
+    df = pd.read_csv(csv_data, sep=';', on_bad_lines='skip')
+    
+    linhas = len(df)
+    
+    nome_aba = "Receitas_2025"
+    try:
+        aba = planilha_google.worksheet(nome_aba)
+    except:
+        print(f"ℹ️ Criando nova aba: {nome_aba}")
+        aba = planilha_google.add_worksheet(title=nome_aba, rows=2000, cols=20)
+    
+    aba.clear()
+    df = df.fillna("") 
+    aba.update([df.columns.values.tolist()] + df.values.tolist())
+    
+    print(f"✅ Aba '{nome_aba}' atualizada: {linhas} linhas.")
+    return linhas
+
+# --- EXECUTAR TUDO ---
+def executar_geral():
+    planilha = conectar_google()
+    qtd_emendas = tarefa_emendas(planilha)
+    qtd_receitas = tarefa_receitas(planilha)
+    return f"Aba 'emendas': {qtd_emendas} | Aba 'Receitas_2025': {qtd_receitas}"
 
 # --- LOOP PRINCIPAL ---
-debug_secrets() # Testa log logo no começo
-try:
-    total = executar_tarefa()
-    enviar_email("✅ Sucesso Robô", f"Planilha atualizada com {total} linhas.")
-    print("--- FIM: SUCESSO ---")
-except Exception as e:
-    print(f"❌ ERRO FATAL: {str(e)}")
-    enviar_email("⚠️ Erro no Robô", f"Erro: {str(e)}")
+MAX_TENTATIVAS = 5
+tentativa = 1
 
+while tentativa <= MAX_TENTATIVAS:
+    try:
+        print(f"🔄 Rodada {tentativa}/{MAX_TENTATIVAS}...")
+        resumo = executar_geral()
+        enviar_email("✅ Robô Canindé: Sucesso", f"Resumo:\n{resumo}")
+        print("\n--- SUCESSO TOTAL ---")
+        break
+    except Exception as e:
+        print(f"❌ Erro: {e}")
+        if tentativa == MAX_TENTATIVAS:
+            enviar_email("❌ Falha Robô", f"Erro: {str(e)}")
+        else:
+            time.sleep(60)
+        tentativa += 1
