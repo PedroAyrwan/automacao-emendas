@@ -67,8 +67,8 @@ def executar_tarefa():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     client = gspread.authorize(creds)
     
-    # Pega a primeira planilha disponível na conta do robô
-    planilha = client.open_all()[0].sheet1 
+    # Abre a planilha EXATA pelo nome (Mais seguro e funciona sempre)
+    planilha = client.open("Robo_Caninde").sheet1
     
     # Limpa o que tinha antes e coloca os dados novos
     planilha.clear()
