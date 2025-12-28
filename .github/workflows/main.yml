@@ -2,8 +2,8 @@ name: Robô Canindé
 
 on:
   schedule:
-    # Roda a cada 15 minutos
-    - cron: '*/15 * * * *'
+    # Roda as 9 horas e as 18  
+    - cron: '0 12,21 * * *'
   workflow_dispatch: # Permite rodar manualmente para testar
 
 jobs:
