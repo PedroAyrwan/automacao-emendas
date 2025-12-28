@@ -2,9 +2,9 @@ name: Robô Canindé
 
 on:
   schedule:
-    # Roda todo dia às 09:00 UTC (06:00 da manhã no Brasil)
-    - cron: '0 9 * * *'
-  workflow_dispatch: # Permite rodar manualmente clicando num botão para testar
+    # Roda a cada 15 minutos
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Permite rodar manualmente para testar
 
 jobs:
   build:
@@ -20,12 +20,20 @@ jobs:
           python-version: '3.9'
 
       - name: Instalar bibliotecas
+        # O arquivo requirements está dentro da pasta, então avisamos o pip
         run: |
-          pip install -r requirements.txt
+          pip install -r automacao-emendas-main/requirements.txt
 
       - name: Criar arquivo de credenciais
-        # Aqui ele pega o segredo que criamos e recria o arquivo JSON pro Python ler
-        run: echo '${{ secrets.CREDENTIALS_JSON }}' > credentials.json
+        # Criamos o json DENTRO da pasta onde o script está
+        run: echo '${{ secrets.CREDENTIALS_JSON }}' > automacao-emendas-main/credentials.json
 
       - name: Rodar o script
-        run: python asdf.py
+        env:
+          EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+          SENHA_EMAIL: ${{ secrets.SENHA_EMAIL }}
+          EMAIL_DESTINATARIO: ${{ secrets.EMAIL_DESTINATARIO }}
+        # Entramos na pasta (cd) e DEPOIS rodamos o Python
+        run: |
+          cd automacao-emendas-main
+          python automacao_emenda.py
