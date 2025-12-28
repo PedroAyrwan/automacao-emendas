@@ -1,0 +1,39 @@
+name: Robô Canindé
+
+on:
+  schedule:
+    # Roda a cada 15 minutos
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Permite rodar manualmente para testar
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar bibliotecas
+        # O arquivo requirements está dentro da pasta, então avisamos o pip
+        run: |
+          pip install -r automacao-emendas-main/requirements.txt
+
+      - name: Criar arquivo de credenciais
+        # Criamos o json DENTRO da pasta onde o script está
+        run: echo '${{ secrets.CREDENTIALS_JSON }}' > automacao-emendas-main/credentials.json
+
+      - name: Rodar o script
+        env:
+          EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+          SENHA_EMAIL: ${{ secrets.SENHA_EMAIL }}
+          EMAIL_DESTINATARIO: ${{ secrets.EMAIL_DESTINATARIO }}
+        # Entramos na pasta (cd) e DEPOIS rodamos o Python
+        run: |
+          cd automacao-emendas-main
+          python automacao_emenda.py
