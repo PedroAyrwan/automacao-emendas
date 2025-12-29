@@ -83,7 +83,7 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA 3: FOLHA (COLUNAS ORDENADAS CORRETAMENTE) ---
+# --- TAREFA 3: FOLHA (LÓGICA DE ÂNCORA "2025") ---
 def tarefa_folha(planilha_google):
     print("\n--- 3. Atualizando Folha de Pagamento... ---")
     
@@ -107,25 +107,25 @@ def tarefa_folha(planilha_google):
     for linha in linhas:
         partes = [p.strip() for p in linha.split(';')]
         
-        # PODA: Remove vazios do final (garante alinhamento)
+        # Poda básica
         while len(partes) > 0 and partes[-1] == "":
             partes.pop()
             
         if len(partes) < 5: continue
             
-        # 1. Ignora Cabeçalhos
+        # Ignora Cabeçalhos
         if len(partes) > 3 and (partes[2] == "CPF" or "Matrícula" in partes[3]): continue
             
-        # 2. Captura Cargo
+        # Captura Cargo
         if len(partes) > 10 and partes[2] == "" and partes[10] != "":
             cargo_atual = partes[10]
             continue
             
-        # 3. Captura Pessoa
+        # Captura Pessoa
         if len(partes) > 5 and partes[2] != "" and partes[4] != "":
             
             try:
-                # --- DADOS ---
+                # --- DADOS PESSOAIS ---
                 cpf = partes[2]
                 matricula = partes[3]
                 nome = partes[4]
@@ -133,17 +133,40 @@ def tarefa_folha(planilha_google):
                 vinculo = partes[7]     
                 secretaria = partes[9]  
                 
-                # --- FINANCEIRO (Reverso) ---
-                val_liquido = partes[-1]  # Último
-                descontos = partes[-2]    # Penúltimo
-                remun_bruta = partes[-4]  # Pula o vazio -3
-                salario_base = partes[-5] 
-                ano = partes[-6]          
-                mes = partes[-7]          # O Mês está aqui
-                
-                # O índice -8 é o "40" (H. Semanal). Nós não pegamos ele.
+                # --- ESTRATÉGIA DE ÂNCORA (Localiza o Ano) ---
+                # Em vez de contar, procuramos onde está escrito "2025"
+                if "2025" in partes:
+                    # Acha o último índice onde aparece 2025 (para evitar erros com nomes)
+                    idx_ano = len(partes) - 1 - partes[::-1].index("2025")
+                elif "2024" in partes:
+                    idx_ano = len(partes) - 1 - partes[::-1].index("2024")
+                else:
+                    # Se não achar o ano, pula a linha (segurança)
+                    continue
 
-            except IndexError:
+                # --- MAPEAMENTO RELATIVO AO ANO ---
+                # ... | 40 | 11 | 2025 | Base | Bruta | "" | Desc | Liq
+                #      -2   -1    ^ (idx)
+                
+                ano = partes[idx_ano]
+                mes = partes[idx_ano - 1] # Mês vem logo antes do ano
+                
+                # Ignoramos idx_ano - 2 (que é onde está o 40)
+                
+                salario_base = partes[idx_ano + 1]
+                remun_bruta = partes[idx_ano + 2]
+                
+                # Lógica para achar Descontos e Líquido (pode ter gap vazio ou não)
+                # Verifica se +3 existe e é vazio
+                if idx_ano + 3 < len(partes) and partes[idx_ano + 3] == "":
+                     descontos = partes[idx_ano + 4]
+                     val_liquido = partes[idx_ano + 5]
+                else:
+                     # Se não tiver gap vazio
+                     descontos = partes[idx_ano + 3]
+                     val_liquido = partes[idx_ano + 4]
+
+            except (IndexError, ValueError):
                 continue
 
             pessoa = {
@@ -154,7 +177,7 @@ def tarefa_folha(planilha_google):
                 "Vinculo": vinculo,      
                 "Secretaria": secretaria,   
                 "Data_Admissao": admissao,
-                "Mes": mes,
+                "Mes": mes,             
                 "Ano": ano,
                 "Salario_Base": salario_base,
                 "Remun_Bruta": remun_bruta,
@@ -177,27 +200,15 @@ def tarefa_folha(planilha_google):
     aba.clear()
     
     if not df.empty:
-        # AQUI ESTÁ A CORREÇÃO VISUAL:
-        # Forçamos a ordem: ... | Admissao | Mes | Ano | Salario ...
+        # FORÇA A ORDEM DAS COLUNAS: Mês vem antes do Ano
         colunas_ordenadas = [
-            "Matricula", 
-            "Nome_Servidor", 
-            "CPF", 
-            "Cargo", 
-            "Vinculo", 
-            "Secretaria", 
-            "Data_Admissao", 
-            "Mes",              # Mês vem ANTES do Ano
-            "Ano",              # Ano foi empurrado para a frente
-            "Salario_Base", 
-            "Remun_Bruta", 
-            "Descontos", 
-            "Valor_Liquido"
+            "Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", 
+            "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", 
+            "Descontos", "Valor_Liquido"
         ]
         
-        # Reorganiza o DataFrame nessa ordem exata
-        df = df[colunas_ordenadas]
-        
+        # Reorganiza e salva
+        df = df.reindex(columns=colunas_ordenadas)
         dados_final = [df.columns.values.tolist()] + df.values.tolist()
         aba.update('A1', dados_final)
     
