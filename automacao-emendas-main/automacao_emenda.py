@@ -83,7 +83,7 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA 3: FOLHA (MÊS INCLUÍDO E 40 REMOVIDO) ---
+# --- TAREFA 3: FOLHA (COLUNAS ORDENADAS CORRETAMENTE) ---
 def tarefa_folha(planilha_google):
     print("\n--- 3. Atualizando Folha de Pagamento... ---")
     
@@ -125,7 +125,7 @@ def tarefa_folha(planilha_google):
         if len(partes) > 5 and partes[2] != "" and partes[4] != "":
             
             try:
-                # --- DADOS DO INÍCIO (Fixos) ---
+                # --- DADOS ---
                 cpf = partes[2]
                 matricula = partes[3]
                 nome = partes[4]
@@ -133,16 +133,15 @@ def tarefa_folha(planilha_google):
                 vinculo = partes[7]     
                 secretaria = partes[9]  
                 
-                # --- DADOS DO FIM (Reversos) ---
+                # --- FINANCEIRO (Reverso) ---
                 val_liquido = partes[-1]  # Último
                 descontos = partes[-2]    # Penúltimo
-                # partes[-3] é vazio, pulamos
-                remun_bruta = partes[-4]  # Antepenúltimo real
+                remun_bruta = partes[-4]  # Pula o vazio -3
                 salario_base = partes[-5] 
                 ano = partes[-6]          
-                mes = partes[-7]          # AQUI ESTÁ O MÊS!
+                mes = partes[-7]          # O Mês está aqui
                 
-                # partes[-8] seria o "40" (H. Semanal). Nós IGNORAMOS ele propositalmente.
+                # O índice -8 é o "40" (H. Semanal). Nós não pegamos ele.
 
             except IndexError:
                 continue
@@ -155,7 +154,7 @@ def tarefa_folha(planilha_google):
                 "Vinculo": vinculo,      
                 "Secretaria": secretaria,   
                 "Data_Admissao": admissao,
-                "Mes": mes,             # Coluna restaurada!
+                "Mes": mes,
                 "Ano": ano,
                 "Salario_Base": salario_base,
                 "Remun_Bruta": remun_bruta,
@@ -178,8 +177,25 @@ def tarefa_folha(planilha_google):
     aba.clear()
     
     if not df.empty:
-        # Garante a ordem correta das colunas no Google Sheets
-        colunas_ordenadas = ["Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", "Descontos", "Valor_Liquido"]
+        # AQUI ESTÁ A CORREÇÃO VISUAL:
+        # Forçamos a ordem: ... | Admissao | Mes | Ano | Salario ...
+        colunas_ordenadas = [
+            "Matricula", 
+            "Nome_Servidor", 
+            "CPF", 
+            "Cargo", 
+            "Vinculo", 
+            "Secretaria", 
+            "Data_Admissao", 
+            "Mes",              # Mês vem ANTES do Ano
+            "Ano",              # Ano foi empurrado para a frente
+            "Salario_Base", 
+            "Remun_Bruta", 
+            "Descontos", 
+            "Valor_Liquido"
+        ]
+        
+        # Reorganiza o DataFrame nessa ordem exata
         df = df[colunas_ordenadas]
         
         dados_final = [df.columns.values.tolist()] + df.values.tolist()
