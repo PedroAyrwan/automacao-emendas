@@ -25,8 +25,6 @@ LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L
 
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
-
-# AQUI: Link ajustado para 10.000 registros para garantir a lista completa
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
@@ -58,7 +56,7 @@ def conectar_google():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     return gspread.authorize(creds).open(NOME_PLANILHA_GOOGLE)
 
-# --- TAREFA 1: EMENDAS ---
+# --- TAREFAS ---
 def tarefa_emendas(planilha_google):
     print("\n--- 1. Atualizando Emendas... ---")
     df = pd.read_csv(URL_EMENDAS, encoding='latin1', sep=';', on_bad_lines='skip')
@@ -69,15 +67,12 @@ def tarefa_emendas(planilha_google):
     aba.update('A1', [df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     return len(df_filtrado)
 
-# --- TAREFA 2: RECEITAS ---
 def tarefa_receitas(planilha_google):
     print("\n--- 2. Atualizando Receitas... ---")
     response = requests.get(URL_RECEITAS)
     csv_data = StringIO(response.content.decode('latin1'))
-    # Pula cabeçalho decorativo
     df = pd.read_csv(csv_data, sep=';', skiprows=4, on_bad_lines='skip')
     
-    # Seleção de colunas específicas conforme estrutura Ágape
     df = df.iloc[:, [0, 2, 5, 6, 8, 9]]
     df.columns = ['Ano', 'Codigo', 'Descricao', 'Previsto', 'Realizado', '%']
     df = df.dropna(subset=['Descricao'])
@@ -88,85 +83,76 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA 3: FOLHA (LEITURA MANUAL BLINDADA) ---
+# --- TAREFA 3: FOLHA (INDEXAÇÃO REVERSA) ---
 def tarefa_folha(planilha_google):
-    print("\n--- 3. Atualizando Folha de Pagamento (Leitura Manual Blindada)... ---")
+    print("\n--- 3. Atualizando Folha de Pagamento (Correção Final)... ---")
     
-    # Garante que a URL tenha o parametro total=10000
+    # Garante URL com 10.000
     url_final = URL_FOLHA
     if "total=10000" not in url_final:
         url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
-        if "total=10000" not in url_final:
-             url_final += "&total=10000"
+        if "total=10000" not in url_final: url_final += "&total=10000"
     
     print(f"🔗 Baixando dados...")
     response = requests.get(url_final)
     response.raise_for_status()
     
-    # Decodifica e separa por linhas
     conteudo = response.content.decode('latin1')
     linhas = conteudo.split('\n')
     
     dados_processados = []
-    cargo_atual = "" # Variável chave para memorizar o cargo da linha anterior
+    cargo_atual = "" 
     
     print(f"🔄 Processando {len(linhas)} linhas brutas...")
     
     for linha in linhas:
         partes = linha.split(';')
         
-        # BLINDAGEM: Garante que tem colunas suficientes antes de acessar índices altos
-        # Precisamos de pelo menos 11 colunas para ler o Cargo com segurança
-        if len(partes) < 11:
-            continue
+        # Pula linhas muito curtas
+        if len(partes) < 11: continue
             
-        # Limpa espaços em branco
         partes = [p.strip() for p in partes]
         
-        # --- Lógica do "Zebra" ---
-        
-        # 1. Ignora Cabeçalhos (CPF ou Matrícula na coluna)
-        if partes[2] == "CPF" or "Matrícula" in partes[3]:
-            continue
+        # 1. Ignora Cabeçalhos
+        if partes[2] == "CPF" or "Matrícula" in partes[3]: continue
             
-        # 2. Captura o Cargo (Só se índice 10 existir, for texto e CPF estiver vazio)
+        # 2. Captura Cargo (Zebra)
         if partes[2] == "" and partes[10] != "":
             cargo_atual = partes[10]
             continue
             
-        # 3. Captura a Pessoa (Linha onde CPF existe)
+        # 3. Captura Pessoa
         if partes[2] != "" and partes[4] != "":
-            # Garante que a lista 'partes' vai até o final para evitar erro de índice
+            # Garante tamanho mínimo para usar índices negativos com segurança
             while len(partes) < 22: partes.append("")
 
-            # Monta o dicionário com os índices exatos descobertos na análise do CSV
+            # ESTRATÉGIA: Índices Positivos para o Início (Nomes, CPF)
+            # Índices Negativos para o Fim (Valores Financeiros) -> Mais seguro!
+            
             pessoa = {
                 "Matricula": partes[3],
                 "Nome_Servidor": partes[4],
                 "CPF": partes[2],
-                "Cargo": cargo_atual,      # Usa o cargo memorizado da linha anterior
-                "Vinculo": partes[7],      # Índice correto: 7
-                "Secretaria": partes[9],   # Índice correto: 9
+                "Cargo": cargo_atual,      
+                "Vinculo": partes[7],      
+                "Secretaria": partes[9],   
                 "Data_Admissao": partes[5],
-                "Mes": partes[14],
-                "Ano": partes[15],
-                "Salario_Base": partes[16],
-                "Remun_Bruta": partes[17],
-                "Descontos": partes[19],
-                "Valor_Liquido": partes[20]
+                
+                # DAQUI PRA BAIXO CONTAMOS DE TRÁS PRA FRENTE
+                "Mes": partes[-8],            # Era [14]
+                "Ano": partes[-7],            # Era [15]
+                "Salario_Base": partes[-6],   # Era [16]
+                "Remun_Bruta": partes[-5],    # Era [17] (Pula o vazio -4)
+                "Descontos": partes[-3],      # Era [19]
+                "Valor_Liquido": partes[-2]   # Era [20]
             }
             dados_processados.append(pessoa)
 
-    # Cria DataFrame
     df = pd.DataFrame(dados_processados)
     
-    # Filtro final de segurança
     if not df.empty:
         df = df[df["Nome_Servidor"] != ""]
-    else:
-        print("⚠️ Atenção: Nenhum dado foi processado da folha.")
 
-    # Envia para o Google Sheets
     nome_aba = "Folha_Pagamento"
     try:
         aba = planilha_google.worksheet(nome_aba)
@@ -179,7 +165,7 @@ def tarefa_folha(planilha_google):
         dados_final = [df.columns.values.tolist()] + df.values.tolist()
         aba.update('A1', dados_final)
     
-    print(f"✅ Aba '{nome_aba}' corrigida: {len(df)} servidores importados com Cargo, Vínculo e Secretaria!")
+    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} servidores.")
     return len(df)
 
 # --- EXECUÇÃO ---
