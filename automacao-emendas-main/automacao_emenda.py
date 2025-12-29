@@ -25,7 +25,8 @@ LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L
 
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
-# URL com limite aumentado para garantir todos os registros
+
+# AQUI: Link ajustado para 10.000 registros para garantir a lista completa
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
@@ -57,7 +58,7 @@ def conectar_google():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     return gspread.authorize(creds).open(NOME_PLANILHA_GOOGLE)
 
-# --- TAREFAS ---
+# --- TAREFA 1: EMENDAS ---
 def tarefa_emendas(planilha_google):
     print("\n--- 1. Atualizando Emendas... ---")
     df = pd.read_csv(URL_EMENDAS, encoding='latin1', sep=';', on_bad_lines='skip')
@@ -68,10 +69,12 @@ def tarefa_emendas(planilha_google):
     aba.update('A1', [df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     return len(df_filtrado)
 
+# --- TAREFA 2: RECEITAS ---
 def tarefa_receitas(planilha_google):
     print("\n--- 2. Atualizando Receitas... ---")
     response = requests.get(URL_RECEITAS)
     csv_data = StringIO(response.content.decode('latin1'))
+    # Pula cabeçalho decorativo
     df = pd.read_csv(csv_data, sep=';', skiprows=4, on_bad_lines='skip')
     
     # Seleção de colunas específicas conforme estrutura Ágape
@@ -85,13 +88,16 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
+# --- TAREFA 3: FOLHA (LEITURA MANUAL BLINDADA) ---
 def tarefa_folha(planilha_google):
-    print("\n--- 3. Atualizando Folha de Pagamento (Leitura Manual)... ---")
+    print("\n--- 3. Atualizando Folha de Pagamento (Leitura Manual Blindada)... ---")
     
     # Garante que a URL tenha o parametro total=10000
     url_final = URL_FOLHA
     if "total=10000" not in url_final:
         url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
+        if "total=10000" not in url_final:
+             url_final += "&total=10000"
     
     print(f"🔗 Baixando dados...")
     response = requests.get(url_final)
@@ -109,8 +115,9 @@ def tarefa_folha(planilha_google):
     for linha in linhas:
         partes = linha.split(';')
         
-        # Pula linhas muito curtas ou vazias
-        if len(partes) < 10:
+        # BLINDAGEM: Garante que tem colunas suficientes antes de acessar índices altos
+        # Precisamos de pelo menos 11 colunas para ler o Cargo com segurança
+        if len(partes) < 11:
             continue
             
         # Limpa espaços em branco
@@ -118,28 +125,28 @@ def tarefa_folha(planilha_google):
         
         # --- Lógica do "Zebra" ---
         
-        # 1. Ignora Cabeçalhos
+        # 1. Ignora Cabeçalhos (CPF ou Matrícula na coluna)
         if partes[2] == "CPF" or "Matrícula" in partes[3]:
             continue
             
-        # 2. Captura o Cargo (Linha onde CPF é vazio mas Coluna 10 tem texto)
+        # 2. Captura o Cargo (Só se índice 10 existir, for texto e CPF estiver vazio)
         if partes[2] == "" and partes[10] != "":
             cargo_atual = partes[10]
             continue
             
         # 3. Captura a Pessoa (Linha onde CPF existe)
         if partes[2] != "" and partes[4] != "":
-            # Garante tamanho da lista para evitar erros
+            # Garante que a lista 'partes' vai até o final para evitar erro de índice
             while len(partes) < 22: partes.append("")
 
-            # Monta o dicionário com os índices exatos descobertos na análise
+            # Monta o dicionário com os índices exatos descobertos na análise do CSV
             pessoa = {
                 "Matricula": partes[3],
                 "Nome_Servidor": partes[4],
                 "CPF": partes[2],
                 "Cargo": cargo_atual,      # Usa o cargo memorizado da linha anterior
-                "Vinculo": partes[7],      # Índice corrigido (era 6)
-                "Secretaria": partes[9],   # Índice corrigido (era 8)
+                "Vinculo": partes[7],      # Índice correto: 7
+                "Secretaria": partes[9],   # Índice correto: 9
                 "Data_Admissao": partes[5],
                 "Mes": partes[14],
                 "Ano": partes[15],
