@@ -25,8 +25,7 @@ LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L
 
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
-
-# AQUI: Link ajustado para 10.000 registros para garantir a lista completa
+# URL com limite aumentado para garantir todos os registros
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
@@ -58,7 +57,7 @@ def conectar_google():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     return gspread.authorize(creds).open(NOME_PLANILHA_GOOGLE)
 
-# --- TAREFA 1: EMENDAS ---
+# --- TAREFAS ---
 def tarefa_emendas(planilha_google):
     print("\n--- 1. Atualizando Emendas... ---")
     df = pd.read_csv(URL_EMENDAS, encoding='latin1', sep=';', on_bad_lines='skip')
@@ -69,12 +68,10 @@ def tarefa_emendas(planilha_google):
     aba.update('A1', [df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     return len(df_filtrado)
 
-# --- TAREFA 2: RECEITAS ---
 def tarefa_receitas(planilha_google):
     print("\n--- 2. Atualizando Receitas... ---")
     response = requests.get(URL_RECEITAS)
     csv_data = StringIO(response.content.decode('latin1'))
-    # Pula cabeçalho decorativo
     df = pd.read_csv(csv_data, sep=';', skiprows=4, on_bad_lines='skip')
     
     # Seleção de colunas específicas conforme estrutura Ágape
@@ -88,90 +85,94 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA 3: FOLHA (CORRIGIDA) ---
 def tarefa_folha(planilha_google):
-    print("\n--- 3. Atualizando Folha de Pagamento (Filtro Seguro)... ---")
+    print("\n--- 3. Atualizando Folha de Pagamento (Leitura Manual)... ---")
     
-    response = requests.get(URL_FOLHA)
+    # Garante que a URL tenha o parametro total=10000
+    url_final = URL_FOLHA
+    if "total=10000" not in url_final:
+        url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
+    
+    print(f"🔗 Baixando dados...")
+    response = requests.get(url_final)
     response.raise_for_status()
-    conteudo_csv = response.content.decode('latin1')
     
-    # 1. Encontrar a linha do primeiro cabeçalho
-    temp_df = pd.read_csv(StringIO(conteudo_csv), sep=';', header=None, nrows=20, on_bad_lines='skip')
-    linha_cabecalho = 0
-    for index, row in temp_df.iterrows():
-        linha_texto = row.astype(str).str.cat(sep=' ')
-        if "Matrícula" in linha_texto or "ome" in linha_texto:
-            linha_cabecalho = index
-            break
-            
-    print(f"ℹ️ Cabeçalho detectado na linha: {linha_cabecalho}")
+    # Decodifica e separa por linhas
+    conteudo = response.content.decode('latin1')
+    linhas = conteudo.split('\n')
     
-    # 2. Carregar CSV completo
-    df = pd.read_csv(StringIO(conteudo_csv), sep=';', skiprows=linha_cabecalho, on_bad_lines='skip')
+    dados_processados = []
+    cargo_atual = "" # Variável chave para memorizar o cargo da linha anterior
     
-    # 3. MAPA DE TRADUÇÃO
-    mapa_colunas = {
-        "Matrícula": "Matricula",
-        "CPF": "CPF",
-        "ome": "Nome_Servidor",    
-        "argo": "Cargo",           
-        "inculo": "Vinculo",      
-        "unção": "Funcao_Confianca", 
-        "Admissão": "Data_Admissao",
-        "Més": "Mes",
-        "Ano": "Ano",
-        "Salário Ba": "Salario_Base",
-        "Remun. B": "Remun_Bruta",
-        "Desc- Legais": "Descontos",
-        "Valor Liq": "Valor_Liquido"
-    }
+    print(f"🔄 Processando {len(linhas)} linhas brutas...")
     
-    colunas_finais = []
-    
-    # Renomeia as colunas
-    for coluna_csv in list(df.columns):
-        coluna_limpa = coluna_csv.strip()
-        nome_novo = None
-        for chave_feia, valor_bonito in mapa_colunas.items():
-            if chave_feia in coluna_limpa:
-                nome_novo = valor_bonito
-                break
+    for linha in linhas:
+        partes = linha.split(';')
         
-        if nome_novo:
-            df.rename(columns={coluna_csv: nome_novo}, inplace=True)
-            colunas_finais.append(nome_novo)
-    
-    # Mantém só as colunas traduzidas
-    if colunas_finais:
-        df = df[colunas_finais]
-    
-    # 4. FILTRO ANTI-REPETIÇÃO CORRIGIDO 🛡️
-    # Remove apenas se a coluna MATRICULA contiver a palavra "Matrícula"
-    if 'Matricula' in df.columns:
-         df = df[~df['Matricula'].astype(str).str.contains('Matrícula', case=False, na=False)]
-    
-    # Remove apenas se o NOME for exatamente igual ao cabeçalho "Nome" (não usa contains para não apagar Gomes)
-    if 'Nome_Servidor' in df.columns:
-         df = df[df['Nome_Servidor'] != 'Nome']
+        # Pula linhas muito curtas ou vazias
+        if len(partes) < 10:
+            continue
+            
+        # Limpa espaços em branco
+        partes = [p.strip() for p in partes]
+        
+        # --- Lógica do "Zebra" ---
+        
+        # 1. Ignora Cabeçalhos
+        if partes[2] == "CPF" or "Matrícula" in partes[3]:
+            continue
+            
+        # 2. Captura o Cargo (Linha onde CPF é vazio mas Coluna 10 tem texto)
+        if partes[2] == "" and partes[10] != "":
+            cargo_atual = partes[10]
+            continue
+            
+        # 3. Captura a Pessoa (Linha onde CPF existe)
+        if partes[2] != "" and partes[4] != "":
+            # Garante tamanho da lista para evitar erros
+            while len(partes) < 22: partes.append("")
 
-    # 5. Limpeza Final
-    col_filtro = 'Nome_Servidor' if 'Nome_Servidor' in df.columns else df.columns[0]
-    df = df.dropna(subset=[col_filtro])
-    df = df.fillna("")
+            # Monta o dicionário com os índices exatos descobertos na análise
+            pessoa = {
+                "Matricula": partes[3],
+                "Nome_Servidor": partes[4],
+                "CPF": partes[2],
+                "Cargo": cargo_atual,      # Usa o cargo memorizado da linha anterior
+                "Vinculo": partes[7],      # Índice corrigido (era 6)
+                "Secretaria": partes[9],   # Índice corrigido (era 8)
+                "Data_Admissao": partes[5],
+                "Mes": partes[14],
+                "Ano": partes[15],
+                "Salario_Base": partes[16],
+                "Remun_Bruta": partes[17],
+                "Descontos": partes[19],
+                "Valor_Liquido": partes[20]
+            }
+            dados_processados.append(pessoa)
+
+    # Cria DataFrame
+    df = pd.DataFrame(dados_processados)
     
-    # Envia para o Google Sheets (Aumentei a capacidade para 15 mil linhas)
+    # Filtro final de segurança
+    if not df.empty:
+        df = df[df["Nome_Servidor"] != ""]
+    else:
+        print("⚠️ Atenção: Nenhum dado foi processado da folha.")
+
+    # Envia para o Google Sheets
     nome_aba = "Folha_Pagamento"
     try:
         aba = planilha_google.worksheet(nome_aba)
     except:
-        aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=20)
+        aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=15)
     
     aba.clear()
-    dados_final = [df.columns.values.tolist()] + df.values.tolist()
-    aba.update('A1', dados_final)
     
-    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} servidores.")
+    if not df.empty:
+        dados_final = [df.columns.values.tolist()] + df.values.tolist()
+        aba.update('A1', dados_final)
+    
+    print(f"✅ Aba '{nome_aba}' corrigida: {len(df)} servidores importados com Cargo, Vínculo e Secretaria!")
     return len(df)
 
 # --- EXECUÇÃO ---
