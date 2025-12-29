@@ -83,9 +83,9 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA 3: FOLHA (INDEXAÇÃO REVERSA) ---
+# --- TAREFA 3: FOLHA (NOME DA ABA ALTERADO) ---
 def tarefa_folha(planilha_google):
-    print("\n--- 3. Atualizando Folha de Pagamento (Correção Final)... ---")
+    print("\n--- 3. Atualizando Folha de Pagamento... ---")
     
     # Garante URL com 10.000
     url_final = URL_FOLHA
@@ -153,10 +153,12 @@ def tarefa_folha(planilha_google):
     if not df.empty:
         df = df[df["Nome_Servidor"] != ""]
 
-    nome_aba = "Folha_Pagamento"
+    # --- AQUI ESTÁ A MUDANÇA ---
+    nome_aba = "folha_pagamento_geral" 
     try:
         aba = planilha_google.worksheet(nome_aba)
     except:
+        # Cria a aba se não existir
         aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=15)
     
     aba.clear()
