@@ -20,13 +20,14 @@ EMAIL_REMETENTE = limpar_senha(os.getenv("EMAIL_REMETENTE"))
 SENHA_EMAIL = limpar_senha(os.getenv("SENHA_EMAIL"))
 STRING_DESTINATARIOS = limpar_senha(os.getenv("EMAIL_DESTINATARIO"))
 
-# --- LINKS (ATUALIZADO PARA 5000 PESSOAS) ---
+# --- LINKS ---
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L8jxwAp4ermInaUR74bVs/edit?usp=sharing"
 
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
-# AQUI: Mudei total=300 para total=5000 para pegar todo mundo
-URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=5000&docType=csv"
+
+# AQUI: Link ajustado para 10.000 registros para garantir a lista completa
+URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
 NOME_PLANILHA_GOOGLE = "Robo_Caninde"
@@ -57,7 +58,7 @@ def conectar_google():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     return gspread.authorize(creds).open(NOME_PLANILHA_GOOGLE)
 
-# --- TAREFAS ---
+# --- TAREFA 1: EMENDAS ---
 def tarefa_emendas(planilha_google):
     print("\n--- 1. Atualizando Emendas... ---")
     df = pd.read_csv(URL_EMENDAS, encoding='latin1', sep=';', on_bad_lines='skip')
@@ -68,6 +69,7 @@ def tarefa_emendas(planilha_google):
     aba.update('A1', [df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     return len(df_filtrado)
 
+# --- TAREFA 2: RECEITAS ---
 def tarefa_receitas(planilha_google):
     print("\n--- 2. Atualizando Receitas... ---")
     response = requests.get(URL_RECEITAS)
@@ -86,8 +88,9 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
+# --- TAREFA 3: FOLHA (CORRIGIDA) ---
 def tarefa_folha(planilha_google):
-    print("\n--- 3. Atualizando Folha de Pagamento (Correção Total)... ---")
+    print("\n--- 3. Atualizando Folha de Pagamento (Filtro Seguro)... ---")
     
     response = requests.get(URL_FOLHA)
     response.raise_for_status()
@@ -107,14 +110,14 @@ def tarefa_folha(planilha_google):
     # 2. Carregar CSV completo
     df = pd.read_csv(StringIO(conteudo_csv), sep=';', skiprows=linha_cabecalho, on_bad_lines='skip')
     
-    # 3. MAPA DE TRADUÇÃO MELHORADO
+    # 3. MAPA DE TRADUÇÃO
     mapa_colunas = {
         "Matrícula": "Matricula",
         "CPF": "CPF",
         "ome": "Nome_Servidor",    
-        "argo": "Cargo",           # Tenta pegar "Cargo" ou "argo"
+        "argo": "Cargo",           
         "inculo": "Vinculo",      
-        "unção": "Funcao_Confianca", # Função de chefia
+        "unção": "Funcao_Confianca", 
         "Admissão": "Data_Admissao",
         "Més": "Mes",
         "Ano": "Ano",
@@ -143,31 +146,32 @@ def tarefa_folha(planilha_google):
     if colunas_finais:
         df = df[colunas_finais]
     
-    # 4. FILTRO ANTI-REPETIÇÃO (Remove cabeçalhos que aparecem no meio do arquivo)
-    if 'Nome_Servidor' in df.columns:
-        df = df[~df['Nome_Servidor'].astype(str).str.contains('Nome|ome', case=False, na=False)]
-    
+    # 4. FILTRO ANTI-REPETIÇÃO CORRIGIDO 🛡️
+    # Remove apenas se a coluna MATRICULA contiver a palavra "Matrícula"
     if 'Matricula' in df.columns:
          df = df[~df['Matricula'].astype(str).str.contains('Matrícula', case=False, na=False)]
+    
+    # Remove apenas se o NOME for exatamente igual ao cabeçalho "Nome" (não usa contains para não apagar Gomes)
+    if 'Nome_Servidor' in df.columns:
+         df = df[df['Nome_Servidor'] != 'Nome']
 
     # 5. Limpeza Final
-    # Remove vazios baseados no Nome
     col_filtro = 'Nome_Servidor' if 'Nome_Servidor' in df.columns else df.columns[0]
     df = df.dropna(subset=[col_filtro])
     df = df.fillna("")
     
-    # Envia para o Google Sheets
+    # Envia para o Google Sheets (Aumentei a capacidade para 15 mil linhas)
     nome_aba = "Folha_Pagamento"
     try:
         aba = planilha_google.worksheet(nome_aba)
     except:
-        aba = planilha_google.add_worksheet(title=nome_aba, rows=6000, cols=20)
+        aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=20)
     
     aba.clear()
     dados_final = [df.columns.values.tolist()] + df.values.tolist()
     aba.update('A1', dados_final)
     
-    print(f"✅ Aba '{nome_aba}' corrigida: {len(df)} servidores.")
+    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} servidores.")
     return len(df)
 
 # --- EXECUÇÃO ---
