@@ -83,11 +83,10 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA 3: FOLHA DE PAGAMENTO (CORRIGIDA E NOME DA ABA MUDADO) ---
+# --- TAREFA 3: FOLHA (CORREÇÃO DE COLUNAS) ---
 def tarefa_folha(planilha_google):
-    print("\n--- 3. Atualizando Folha de Pagamento (Alinhamento Preciso)... ---")
+    print("\n--- 3. Atualizando Folha de Pagamento... ---")
     
-    # 1. Garante URL com 10.000 registros
     url_final = URL_FOLHA
     if "total=10000" not in url_final:
         url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
@@ -106,127 +105,73 @@ def tarefa_folha(planilha_google):
     print(f"🔄 Processando {len(linhas)} linhas brutas...")
     
     for linha in linhas:
-        # Divide e limpa espaços extras de cada célula
         partes = [p.strip() for p in linha.split(';')]
         
-        # PODA DIREITA: Remove células vazias do final da lista
-        # Isso garante que o índice -1 seja sempre o último DADO REAL (Valor Líquido)
+        # PODA: Remove vazios do final para garantir o alinhamento reverso
         while len(partes) > 0 and partes[-1] == "":
             partes.pop()
             
-        # Se a linha ficou muito curta (vazia ou só lixo), pula
         if len(partes) < 5: continue
             
         # 1. Ignora Cabeçalhos
         if len(partes) > 3 and (partes[2] == "CPF" or "Matrícula" in partes[3]): continue
             
-        # 2. Captura Cargo (Lógica do Zebra)
-        # Linha de cargo tem CPF vazio (index 2) e texto lá pelo meio (index 10)
-        # Verificamos len > 10 para não dar erro de índice
+        # 2. Captura Cargo
         if len(partes) > 10 and partes[2] == "" and partes[10] != "":
             cargo_atual = partes[10]
             continue
             
         # 3. Captura Pessoa
-        # Tem que ter CPF (index 2) e Nome (index 4)
         if len(partes) > 5 and partes[2] != "" and partes[4] != "":
             
             try:
-                # --- DADOS PESSOAIS (Início da Lista - Índices Fixos) ---
+                # --- DADOS DO INÍCIO (Fixos) ---
                 cpf = partes[2]
                 matricula = partes[3]
                 nome = partes[4]
                 admissao = partes[5]
-                vinculo = partes[7]     # 7 é Vínculo
-                secretaria = partes[9]  # 9 é Secretaria
+                vinculo = partes[7]     
+                secretaria = partes[9]  
                 
-                # --- DADOS FINANCEIROS (Fim da Lista - Índices Reversos) ---
-                # Como fizemos a "poda" (.pop) dos vazios finais, o último item é garantido.
-                # Estrutura esperada do fim: [..., Base, Bruto, (vazios ignorados), Desc, Liq]
-                # MAS CUIDADO: O .pop removeu os vazios FINAIS.
-                # No seu CSV, "Bruto" e "Desc" podem ter vazios NO MEIO entre eles.
+                # --- DADOS DO FIM (Reversos) ---
+                # AQUI ESTAVA O ERRO DO 40. AJUSTAMOS OS ÍNDICES:
                 
-                # Vamos mapear REVERSO:
-                val_liquido = partes[-1]  # Último valor real
-                descontos = partes[-2]    # Penúltimo valor real
+                val_liquido = partes[-1]  # Último (Correto)
+                descontos = partes[-2]    # Penúltimo (Correto)
                 
-                # Agora o pulo do gato: Entre Descontos e Bruto tem vazios no CSV original?
-                # Como usamos .split(';'), os vazios do meio CONTINUAM LÁ se não estiverem no final absoluto.
-                # Mas o .pop() só tira do final.
+                # O índice -3 é vazio, pulamos.
+                remun_bruta = partes[-4]  # Antepenúltimo real (Era -5)
+                salario_base = partes[-5] # (Era -6)
+                ano = partes[-6]          # (Era -7)
+                mes = partes[-7]          # (Era -8, onde estava o 40)
                 
-                # Vamos re-analisar a estratégia segura baseada no seu snippet:
-                # ...;Salário Base;Remun. Bruta;;Desc. Legais ;Valor Liq. ;
-                # Índices relativos ao FIM DO ARQUIVO ORIGINAL (sem o pop):
-                # -2: Líquido
-                # -3: Descontos
-                # -5: Bruta (Pula o -4 vazio)
-                # -6: Base
-                
-                # Vou usar a estratégia HÍBRIDA:
-                # Se fizemos pop, mudou tudo. Vamos usar a lista ORIGINAL (partes_raw) para indexação reversa segura.
-                
+                # O índice -8 é o "40" (H. Semanal). Nós IGNORAMOS ele propositalmente agora.
+
             except IndexError:
                 continue
 
-            # Recria a lista original para indexação segura
-            partes_raw = [p.strip() for p in linha.split(';')] 
-            
-            # --- MAPEAMENTO SEGURO (Baseado na estrutura fixa do CSV) ---
-            # Indices negativos considerando que o CSV tem vazios fixos no final
-            # Exemplo final linha: ...;Base;Bruta;;Desc;Liq;
-            
-            try:
-                # Se a linha termina com ; (vazio), o último elemento é vazio.
-                # Vamos achar o índice do Valor Líquido procurando o último não-vazio ou posição fixa
-                
-                # Ajuste Fino: Pega as colunas certas contando de trás pra frente na lista BRUTA
-                # O CSV do snippet termina com um ; vazio. Então -1 é vazio.
-                # -2: Líquido
-                # -3: Descontos
-                # -4: Vazio
-                # -5: Bruto
-                # -6: Base
-                
-                # Garante que temos elementos suficientes preenchendo se necessário
-                while len(partes_raw) < 22: partes_raw.append("")
-
-                pessoa = {
-                    "Matricula": partes_raw[3],
-                    "Nome_Servidor": partes_raw[4],
-                    "CPF": partes_raw[2],
-                    "Cargo": cargo_atual,      
-                    "Vinculo": partes_raw[7],      
-                    "Secretaria": partes_raw[9],   
-                    "Data_Admissao": partes_raw[5],
-                    "Mes": partes_raw[14],       # Mês costuma ser fixo no meio
-                    "Ano": partes_raw[15],       # Ano também
-                    "Salario_Base": partes_raw[16],
-                    "Remun_Bruta": partes_raw[17],
-                    "Descontos": partes_raw[19],     # Pula o 18
-                    "Valor_Liquido": partes_raw[20]  # Pula
-                }
-                
-                # Se por acaso o CSV vier deslocado no final (alguns vêm), usamos a lógica reversa de fallback
-                if pessoa["Valor_Liquido"] == "":
-                     # Tenta pegar nas últimas posições não vazias
-                     limpos = [x for x in partes_raw if x != ""]
-                     if len(limpos) > 5:
-                         pessoa["Valor_Liquido"] = limpos[-1]
-                         pessoa["Descontos"] = limpos[-2]
-                         pessoa["Remun_Bruta"] = limpos[-3] 
-                         # Base seria limpos[-4]
-                
-                dados_processados.append(pessoa)
-                
-            except IndexError:
-                continue
+            pessoa = {
+                "Matricula": matricula,
+                "Nome_Servidor": nome,
+                "CPF": cpf,
+                "Cargo": cargo_atual,      
+                "Vinculo": vinculo,      
+                "Secretaria": secretaria,   
+                "Data_Admissao": admissao,
+                "Mes": mes,
+                "Ano": ano,
+                "Salario_Base": salario_base,
+                "Remun_Bruta": remun_bruta,
+                "Descontos": descontos,
+                "Valor_Liquido": val_liquido
+            }
+            dados_processados.append(pessoa)
 
     df = pd.DataFrame(dados_processados)
     
     if not df.empty:
         df = df[df["Nome_Servidor"] != ""]
 
-    # --- NOME DA ABA DEFINITIVO ---
     nome_aba = "folha_pagamento_geral"
     try:
         aba = planilha_google.worksheet(nome_aba)
