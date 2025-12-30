@@ -26,13 +26,13 @@ LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L
 
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 
-# Link de Receitas (Geral)
+# Link de Receitas (Geral - Serviço 193)
 URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
 
-# Link da Folha Geral (RH)
+# Link da Folha Geral (RH - Serviço 193)
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
-# Link da Folha Educação (NOVO LINK SERVIÇO 350)
+# Link da Folha Educação (Atualizado - Serviço 350 - Receita)
 URL_FOLHA_EDUCACAO = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/350/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
@@ -75,28 +75,89 @@ def tarefa_emendas(planilha_google):
     aba.update('A1', [df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     return len(df_filtrado)
 
-# --- TAREFA 2: RECEITAS ---
-def tarefa_receitas(planilha_google):
-    print("\n--- 2. Atualizando Receitas... ---")
-    response = requests.get(URL_RECEITAS)
-    csv_data = StringIO(response.content.decode('latin1'))
-    df = pd.read_csv(csv_data, sep=';', skiprows=4, on_bad_lines='skip')
+# --- TAREFA: PROCESSAR RECEITAS (Manual e Robusto) ---
+def processar_receitas(url_alvo, nome_aba, planilha_google):
+    print(f"\n--- Processando Receitas: {nome_aba} ... ---")
     
-    df = df.iloc[:, [0, 2, 5, 6, 8, 9]]
-    df.columns = ['Ano', 'Codigo', 'Descricao', 'Previsto', 'Realizado', '%']
-    df = df.dropna(subset=['Descricao'])
-    df = df[~df['Ano'].astype(str).str.contains('QUANTIDADE', na=False)].fillna("")
+    try:
+        response = requests.get(url_alvo)
+        response.raise_for_status()
+    except Exception as e:
+        raise Exception(f"Erro ao baixar CSV: {str(e)}")
+
+    conteudo = response.content.decode('latin1')
+    linhas = conteudo.split('\n')
     
-    aba = planilha_google.worksheet("Receitas_2025")
+    # 1. Encontrar onde começam os dados (Linha de Cabeçalho "ANO;")
+    idx_inicio = -1
+    for i, linha in enumerate(linhas):
+        if linha.strip().startswith("ANO;"):
+            idx_inicio = i
+            break
+    
+    if idx_inicio == -1:
+        # Se não achou "ANO;", tenta pular umas 5 linhas padrão
+        idx_inicio = 5 
+    
+    dados = []
+    # Processa as linhas ABAIXO do cabeçalho
+    print(f"🔄 Processando a partir da linha {idx_inicio + 2}...")
+    
+    for linha in linhas[idx_inicio + 1:]:
+        partes = linha.split(';')
+        
+        # Filtra linhas vazias ou de rodapé
+        if len(partes) < 5: continue
+        
+        # O arquivo tem colunas vazias extras. Vamos pegar pelos índices fixos observados:
+        # 0: Ano
+        # 2: Código (As vezes vem no 1 ou 2 dependendo do ; extra)
+        # Vamos limpar vazios para pegar sequencialmente? Não, melhor índice fixo do CSV.
+        # No CSV enviado: 2025;;1000...;;;RECEITAS...
+        # 0: 2025
+        # 2: Código
+        # 5: Descrição
+        # 6: Previsto
+        # 8: Realizado
+        # 9: %
+        
+        try:
+            # Garante que tem tamanho suficiente
+            while len(partes) < 10: partes.append("")
+            
+            p_ano = partes[0].strip()
+            # Se não tiver ano, ignora (pode ser linha de total ou lixo)
+            if not p_ano.isdigit(): continue
+            
+            p_codigo = partes[2].strip()
+            p_descricao = partes[5].strip()
+            p_previsto = partes[6].strip()
+            p_realizado = partes[8].strip()
+            p_porc = partes[9].strip()
+            
+            dados.append([p_ano, p_codigo, p_descricao, p_previsto, p_realizado, p_porc])
+        except:
+            continue
+            
+    df = pd.DataFrame(dados, columns=['Ano', 'Codigo', 'Descricao', 'Previsto', 'Realizado', '%'])
+    
+    try:
+        aba = planilha_google.worksheet(nome_aba)
+    except:
+        aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=15)
+    
     aba.clear()
-    aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
+    
+    if not df.empty:
+        aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
+    
+    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} registros.")
     return len(df)
 
-# --- LÓGICA DE PROCESSAMENTO DE FOLHA (Scanner Inteligente) ---
-def processar_dados_folha(url_alvo, nome_aba, planilha_google):
-    print(f"\n--- Processando Folha: {nome_aba} ... ---")
+# --- TAREFA: PROCESSAR FOLHA (RH) ---
+def processar_folha(url_alvo, nome_aba, planilha_google):
+    print(f"\n--- Processando Folha RH: {nome_aba} ... ---")
     
-    # Ajusta total para 10000 apenas se o link parecer ser de RH
     url_final = url_alvo
     if "rh/relatorios" in url_final:
         if "total=" in url_final and "total=10000" not in url_final:
@@ -104,16 +165,11 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
         elif "total=" not in url_final and "?" in url_final:
              url_final += "&total=10000"
     
-    print(f"🔗 Baixando dados de {url_final[:60]}...")
-    
-    # --- CAPTURA DE ERRO HTTP ---
     try:
         response = requests.get(url_final)
         response.raise_for_status() 
-    except requests.exceptions.HTTPError as err:
-        raise Exception(f"Erro HTTP {response.status_code}: Link inacessível.")
     except Exception as err:
-        raise Exception(f"Erro de Conexão: {str(err)}")
+        raise Exception(f"Erro de Conexão RH: {str(err)}")
     
     conteudo = response.content.decode('latin1')
     linhas = conteudo.split('\n')
@@ -125,27 +181,17 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
     
     for linha in linhas:
         partes = [p.strip() for p in linha.split(';')]
+        while len(partes) > 0 and partes[-1] == "": partes.pop()
         
-        while len(partes) > 0 and partes[-1] == "":
-            partes.pop()
-            
         if len(partes) < 5: continue
         if len(partes) > 3 and (partes[2] == "CPF" or "Matrícula" in partes[3]): continue
-            
+        
         if len(partes) > 10 and partes[2] == "" and partes[10] != "":
             cargo_atual = partes[10]
             continue
             
         if len(partes) > 5 and partes[2] != "" and partes[4] != "":
             try:
-                cpf = partes[2]
-                matricula = partes[3]
-                nome = partes[4]
-                admissao = partes[5]
-                vinculo = partes[7]     
-                secretaria = partes[9]  
-                
-                # ÂNCORA 2025
                 if "2025" in partes:
                     idx_ano = len(partes) - 1 - partes[::-1].index("2025")
                 elif "2024" in partes:
@@ -158,7 +204,6 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
                 salario_base = partes[idx_ano + 1]
                 remun_bruta = partes[idx_ano + 2]
                 
-                # SCANNER DE VAZIOS
                 resto_linha = partes[idx_ano + 3 : ]
                 valores_financeiros = [x for x in resto_linha if x != ""]
                 
@@ -172,71 +217,45 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
                     descontos = "0,00"
                     val_liquido = "0,00"
 
-            except (IndexError, ValueError):
-                continue
-
-            pessoa = {
-                "Matricula": matricula,
-                "Nome_Servidor": nome,
-                "CPF": cpf,
-                "Cargo": cargo_atual,      
-                "Vinculo": vinculo,      
-                "Secretaria": secretaria,   
-                "Data_Admissao": admissao,
-                "Mes": mes,             
-                "Ano": ano,
-                "Salario_Base": salario_base,
-                "Remun_Bruta": remun_bruta,
-                "Descontos": descontos,
-                "Valor_Liquido": val_liquido
-            }
-            dados_processados.append(pessoa)
+                pessoa = {
+                    "Matricula": partes[3],
+                    "Nome_Servidor": partes[4],
+                    "CPF": partes[2],
+                    "Cargo": cargo_atual,      
+                    "Vinculo": partes[7],      
+                    "Secretaria": partes[9],   
+                    "Data_Admissao": partes[5],
+                    "Mes": mes,             
+                    "Ano": ano,
+                    "Salario_Base": salario_base,
+                    "Remun_Bruta": remun_bruta,
+                    "Descontos": descontos,
+                    "Valor_Liquido": val_liquido
+                }
+                dados_processados.append(pessoa)
+            except: continue
 
     df = pd.DataFrame(dados_processados)
+    if not df.empty: df = df[df["Nome_Servidor"] != ""]
     
-    if not df.empty:
-        df = df[df["Nome_Servidor"] != ""]
-    else:
-        print(f"⚠️ Atenção: Nenhum servidor encontrado para {nome_aba}. (Provável erro de link ou filtro)")
-
     try:
         aba = planilha_google.worksheet(nome_aba)
     except:
         aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=15)
     
     aba.clear()
-    
     if not df.empty:
-        colunas_ordenadas = [
-            "Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", 
-            "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", 
-            "Descontos", "Valor_Liquido"
-        ]
+        colunas_ordenadas = ["Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", "Descontos", "Valor_Liquido"]
         df = df.reindex(columns=colunas_ordenadas)
-        dados_final = [df.columns.values.tolist()] + df.values.tolist()
-        aba.update('A1', dados_final)
+        aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     
-    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} registros.")
     return len(df)
 
-def tarefa_folha_geral(planilha_google):
-    return processar_dados_folha(URL_FOLHA, "folha_pagamento_geral", planilha_google)
-
-def tarefa_folha_educacao(planilha_google):
-    return processar_dados_folha(URL_FOLHA_EDUCACAO, "folha_pagamento_educacao", planilha_google)
-
-# --- EXECUÇÃO PRINCIPAL COM RELATÓRIO DE ERROS ---
+# --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
-    status = {
-        "Conexao": "Pendente",
-        "Emendas": "Pendente",
-        "Receitas": "Pendente",
-        "Folha_Geral": "Pendente",
-        "Folha_Educacao": "Pendente"
-    }
+    status = {"Conexao": "Pendente", "Emendas": "Pendente", "Receitas": "Pendente", "Folha_Geral": "Pendente", "Folha_Educacao": "Pendente"}
     
     try:
-        # 1. Tenta conectar
         try:
             planilha = conectar_google()
             status["Conexao"] = "✅ OK"
@@ -244,68 +263,40 @@ if __name__ == "__main__":
             status["Conexao"] = f"❌ Erro Crítico: {str(e)}"
             raise e 
 
-        # 2. Executa Emendas
         try:
             qtd = tarefa_emendas(planilha)
             status["Emendas"] = f"✅ Sucesso ({qtd} linhas)"
         except Exception as e:
-            print(f"Erro em Emendas: {e}")
             status["Emendas"] = f"❌ Erro: {str(e)}"
 
-        # 3. Executa Receitas
+        # Receitas Gerais (193)
         try:
-            qtd = tarefa_receitas(planilha)
+            qtd = processar_receitas(URL_RECEITAS, "Receitas_2025", planilha)
             status["Receitas"] = f"✅ Sucesso ({qtd} linhas)"
         except Exception as e:
-            print(f"Erro em Receitas: {e}")
             status["Receitas"] = f"❌ Erro: {str(e)}"
 
-        # 4. Executa Folha Geral
+        # Folha Geral (193) - RH
         try:
-            qtd = tarefa_folha_geral(planilha)
+            qtd = processar_folha(URL_FOLHA, "folha_pagamento_geral", planilha)
             status["Folha_Geral"] = f"✅ Sucesso ({qtd} servidores)"
         except Exception as e:
-            print(f"Erro na Folha Geral: {e}")
             status["Folha_Geral"] = f"❌ Falha: {str(e)}"
 
-        # 5. Executa Folha Educação
+        # Folha Educação (350) - RECEITA (Link fornecido é de receita)
         try:
-            qtd = tarefa_folha_educacao(planilha)
-            status["Folha_Educacao"] = f"✅ Sucesso ({qtd} servidores)"
+            qtd = processar_receitas(URL_FOLHA_EDUCACAO, "folha_pagamento_educacao", planilha)
+            status["Folha_Educacao"] = f"✅ Sucesso ({qtd} linhas)"
         except Exception as e:
-            print(f"Erro na Folha Educação: {e}")
             status["Folha_Educacao"] = f"❌ Falha: {str(e)}"
 
     except Exception as e:
-        print(f"Erro fatal no script: {e}")
+        print(f"Erro fatal: {e}")
 
     finally:
-        # --- MONTA O E-MAIL FINAL ---
-        assunto_email = "🤖 Robô Canindé: Relatório de Execução"
+        assunto = "🤖 Robô Canindé: Relatório"
+        if any("❌" in v for v in status.values()): assunto = "⚠️ Robô Canindé: ALERTA DE ERRO"
         
-        if any("❌" in v for v in status.values()):
-            assunto_email = "⚠️ Robô Canindé: ALERTA DE ERRO"
-
-        mensagem_final = f"""
-        Resumo da execução do robô:
-
-        🔌 Conexão Google: {status['Conexao']}
-        
-        💰 Emendas:
-        {status['Emendas']}
-        
-        📉 Receitas:
-        {status['Receitas']}
-        
-        👥 Folha Geral:
-        {status['Folha_Geral']}
-        
-        🎓 Folha Educação:
-        {status['Folha_Educacao']}
-        
-        ---------------------------------------
-        Executado em: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}
-        """
-        
-        enviar_email(assunto_email, mensagem_final)
-        print("🏁 Fim da execução.")
+        msg = f"Status:\n\n🔌 Conexão: {status['Conexao']}\n💰 Emendas: {status['Emendas']}\n📉 Receitas: {status['Receitas']}\n👥 Folha Geral: {status['Folha_Geral']}\n🎓 Folha Educação: {status['Folha_Educacao']}"
+        enviar_email(assunto, msg)
+        print("🏁 Fim.")
