@@ -26,15 +26,17 @@ LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L
 
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 
-# Link de Receitas (Geral - Serviço 193)
+# 1. Receitas (Geral - Serviço 193)
 URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
 
-# Link da Folha Geral (RH - Serviço 193)
-URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
+# 2. Folha Geral (RH - Serviço 193)
+URL_FOLHA_GERAL = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
-# Link da Folha Educação (RH - Serviço 350 - CORRIGIDO PARA RH)
-# Se fosse receita, a lógica de folha falharia. Ajustei para o endpoint de RH do serviço 350.
+# 3. Folha Educação (RH - Serviço 350)
 URL_FOLHA_EDUCACAO = "https://agtransparenciarhserviceprd.agapesistemas.com.br/350/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=2000&docType=csv"
+
+# 4. Folha Saúde (RH - Serviço 300 - NOVO!)
+URL_FOLHA_SAUDE = "https://agtransparenciarhserviceprd.agapesistemas.com.br/300/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=13&ano=2025&total=99&docType=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
 NOME_PLANILHA_GOOGLE = "Robo_Caninde"
@@ -115,15 +117,18 @@ def processar_receitas(url_alvo, nome_aba, planilha_google):
         aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA: PROCESSAR FOLHA (RH - Lógica Geral) ---
+# --- TAREFA: PROCESSAR FOLHA (RH - Scanner Inteligente) ---
 def processar_folha(url_alvo, nome_aba, planilha_google):
     print(f"\n--- Processando Folha RH: {nome_aba} ... ---")
     
     url_final = url_alvo
-    # Ajusta total se necessário, respeitando o 2000 da educação
+    # Ajusta total automaticamente para garantir todos os servidores
+    # Se o link tiver "total=99", "300", etc, troca por 10000.
     if "rh/relatorios" in url_final:
-        if "total=" in url_final and "total=2000" not in url_final and "total=10000" not in url_final:
-             url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000").replace("total=99", "total=10000")
+        if "total=" in url_final and "total=10000" not in url_final:
+             # Preserva se for o caso específico de 2000, senão força 10000
+             if "total=2000" not in url_final:
+                 url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000").replace("total=99", "total=10000")
         elif "total=" not in url_final and "?" in url_final:
              url_final += "&total=10000"
     
@@ -156,7 +161,6 @@ def processar_folha(url_alvo, nome_aba, planilha_google):
         # Captura Pessoa
         if len(partes) > 5 and partes[2] != "" and partes[4] != "":
             try:
-                # ÂNCORA 2025 para achar os dados financeiros
                 if "2025" in partes:
                     idx_ano = len(partes) - 1 - partes[::-1].index("2025")
                 elif "2024" in partes:
@@ -169,7 +173,6 @@ def processar_folha(url_alvo, nome_aba, planilha_google):
                 salario_base = partes[idx_ano + 1]
                 remun_bruta = partes[idx_ano + 2]
                 
-                # SCANNER INTELIGENTE DE VAZIOS
                 resto_linha = partes[idx_ano + 3 : ]
                 valores_financeiros = [x for x in resto_linha if x != ""]
                 
@@ -221,7 +224,14 @@ def processar_folha(url_alvo, nome_aba, planilha_google):
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
-    status = {"Conexao": "Pendente", "Emendas": "Pendente", "Receitas": "Pendente", "Folha_Geral": "Pendente", "Folha_Educacao": "Pendente"}
+    status = {
+        "Conexao": "Pendente",
+        "Emendas": "Pendente",
+        "Receitas": "Pendente",
+        "Folha_Geral": "Pendente",
+        "Folha_Educacao": "Pendente",
+        "Folha_Saude": "Pendente"
+    }
     
     try:
         try:
@@ -243,26 +253,42 @@ if __name__ == "__main__":
         except Exception as e:
             status["Receitas"] = f"❌ Erro: {str(e)}"
 
+        # 1. FOLHA GERAL
         try:
-            qtd = processar_folha(URL_FOLHA, "folha_pagamento_geral", planilha)
+            qtd = processar_folha(URL_FOLHA_GERAL, "folha_pagamento_geral", planilha)
             status["Folha_Geral"] = f"✅ Sucesso ({qtd} servidores)"
         except Exception as e:
             status["Folha_Geral"] = f"❌ Falha: {str(e)}"
 
-        # AGORA USAMOS A LÓGICA DE FOLHA (RH) PARA A EDUCAÇÃO
+        # 2. FOLHA EDUCAÇÃO
         try:
             qtd = processar_folha(URL_FOLHA_EDUCACAO, "folha_pagamento_educacao", planilha)
             status["Folha_Educacao"] = f"✅ Sucesso ({qtd} servidores)"
         except Exception as e:
             status["Folha_Educacao"] = f"❌ Falha: {str(e)}"
 
+        # 3. FOLHA SAÚDE (NOVA!)
+        try:
+            qtd = processar_folha(URL_FOLHA_SAUDE, "folha_pagamento_saude", planilha)
+            status["Folha_Saude"] = f"✅ Sucesso ({qtd} servidores)"
+        except Exception as e:
+            status["Folha_Saude"] = f"❌ Falha: {str(e)}"
+
     except Exception as e:
         print(f"Erro fatal: {e}")
 
     finally:
-        assunto = "🤖 Robô Canindé: Relatório"
+        assunto = "🤖 Robô Canindé: Relatório Completo"
         if any("❌" in v for v in status.values()): assunto = "⚠️ Robô Canindé: ALERTA DE ERRO"
         
-        msg = f"Status:\n\n🔌 Conexão: {status['Conexao']}\n💰 Emendas: {status['Emendas']}\n📉 Receitas: {status['Receitas']}\n👥 Folha Geral: {status['Folha_Geral']}\n🎓 Folha Educação: {status['Folha_Educacao']}"
+        msg = f"""Status Geral:
+        
+        🔌 Conexão: {status['Conexao']}
+        💰 Emendas: {status['Emendas']}
+        📉 Receitas: {status['Receitas']}
+        👥 Folha Geral: {status['Folha_Geral']}
+        🎓 Folha Educação: {status['Folha_Educacao']}
+        🏥 Folha Saúde: {status['Folha_Saude']}
+        """
         enviar_email(assunto, msg)
         print("🏁 Fim.")
