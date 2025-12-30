@@ -8,6 +8,7 @@ import os
 import requests
 from io import StringIO
 from dotenv import load_dotenv
+import traceback # Importante para pegar detalhes do erro
 
 # --- CONFIGURAÇÕES INICIAIS ---
 load_dotenv()
@@ -29,7 +30,7 @@ URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/1
 # Link da Folha Geral
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
-# Link Novo (Educação) - OBS: Verifique se este link retorna dados de RH ou Receita
+# Link Novo (Educação)
 URL_FOLHA_EDUCACAO = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
@@ -93,7 +94,7 @@ def tarefa_receitas(planilha_google):
 def processar_dados_folha(url_alvo, nome_aba, planilha_google):
     print(f"\n--- Processando Folha: {nome_aba} ... ---")
     
-    # Ajusta total para 10000 se necessário
+    # Ajusta total para 10000
     url_final = url_alvo
     if "total=" in url_final and "total=10000" not in url_final:
          url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
@@ -102,11 +103,7 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
     
     print(f"🔗 Baixando dados de {url_final[:60]}...")
     response = requests.get(url_final)
-    try:
-        response.raise_for_status()
-    except:
-        print(f"❌ Erro ao baixar URL para {nome_aba}")
-        return 0
+    response.raise_for_status() # Vai gerar erro se o link estiver quebrado
     
     conteudo = response.content.decode('latin1')
     linhas = conteudo.split('\n')
@@ -189,8 +186,6 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
     
     if not df.empty:
         df = df[df["Nome_Servidor"] != ""]
-    else:
-        print(f"⚠️ Atenção: Nenhum servidor encontrado para {nome_aba}. Verifique se o link é de RH.")
 
     try:
         aba = planilha_google.worksheet(nome_aba)
@@ -212,25 +207,96 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
     print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} registros.")
     return len(df)
 
-# --- TAREFAS DE FOLHA (Usam a mesma lógica) ---
 def tarefa_folha_geral(planilha_google):
     return processar_dados_folha(URL_FOLHA, "folha_pagamento_geral", planilha_google)
 
 def tarefa_folha_educacao(planilha_google):
     return processar_dados_folha(URL_FOLHA_EDUCACAO, "folha_pagamento_educacao", planilha_google)
 
-# --- EXECUÇÃO ---
-try:
-    planilha = conectar_google()
+# --- EXECUÇÃO PRINCIPAL COM RELATÓRIO DE ERROS ---
+if __name__ == "__main__":
+    # Variáveis de status para o relatório
+    status = {
+        "Conexao": "Pendente",
+        "Emendas": "Pendente",
+        "Receitas": "Pendente",
+        "Folha_Geral": "Pendente",
+        "Folha_Educacao": "Pendente"
+    }
     
-    res1 = tarefa_emendas(planilha)
-    res2 = tarefa_receitas(planilha)
-    res3 = tarefa_folha_geral(planilha)
-    res4 = tarefa_folha_educacao(planilha)
-    
-    resumo = f"Relatório Canindé:\n- Emendas: {res1}\n- Receitas: {res2}\n- Folha Geral: {res3}\n- Folha Educação: {res4}"
-    enviar_email("✅ Robô Canindé: Tudo Atualizado", resumo)
-    print("🚀 Sucesso total!")
-except Exception as e:
-    print(f"❌ Erro na execução: {e}")
-    enviar_email("❌ Robô Canindé: Erro Crítico", str(e))
+    try:
+        # 1. Tenta conectar
+        try:
+            planilha = conectar_google()
+            status["Conexao"] = "✅ OK"
+        except Exception as e:
+            status["Conexao"] = f"❌ Erro Crítico: {str(e)}"
+            raise e # Se não conectar, nem adianta continuar
+
+        # 2. Executa Emendas
+        try:
+            qtd = tarefa_emendas(planilha)
+            status["Emendas"] = f"✅ Sucesso ({qtd} linhas)"
+        except Exception as e:
+            print(f"Erro em Emendas: {e}")
+            status["Emendas"] = f"❌ Erro: {str(e)}"
+
+        # 3. Executa Receitas
+        try:
+            qtd = tarefa_receitas(planilha)
+            status["Receitas"] = f"✅ Sucesso ({qtd} linhas)"
+        except Exception as e:
+            print(f"Erro em Receitas: {e}")
+            status["Receitas"] = f"❌ Erro: {str(e)}"
+
+        # 4. Executa Folha Geral
+        try:
+            qtd = tarefa_folha_geral(planilha)
+            status["Folha_Geral"] = f"✅ Sucesso ({qtd} servidores)"
+        except Exception as e:
+            print(f"Erro na Folha Geral: {e}")
+            status["Folha_Geral"] = f"❌ Erro: {str(e)}"
+
+        # 5. Executa Folha Educação
+        try:
+            qtd = tarefa_folha_educacao(planilha)
+            status["Folha_Educacao"] = f"✅ Sucesso ({qtd} servidores)"
+        except Exception as e:
+            print(f"Erro na Folha Educação: {e}")
+            status["Folha_Educacao"] = f"❌ Erro: {str(e)}"
+
+    except Exception as e:
+        # Captura erro genérico se algo fora do comum acontecer
+        print(f"Erro fatal no script: {e}")
+
+    finally:
+        # --- MONTA O E-MAIL FINAL (SEMPRE ENVIA) ---
+        assunto_email = "🤖 Robô Canindé: Relatório de Execução"
+        
+        # Verifica se houve algum erro para mudar o ícone do assunto
+        if any("❌" in v for v in status.values()):
+            assunto_email = "⚠️ Robô Canindé: AVISO DE ERRO"
+
+        mensagem_final = f"""
+        Olá! Aqui está o resumo da execução do robô:
+
+        🔌 Conexão Google: {status['Conexao']}
+        
+        💰 Emendas Parlamentares:
+        {status['Emendas']}
+        
+        📉 Receitas Municipais:
+        {status['Receitas']}
+        
+        👥 Folha de Pagamento (Geral):
+        {status['Folha_Geral']}
+        
+        🎓 Folha de Pagamento (Educação):
+        {status['Folha_Educacao']}
+        
+        ---------------------------------------
+        Data de execução: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}
+        """
+        
+        enviar_email(assunto_email, mensagem_final)
+        print("🏁 Fim da execução.")
