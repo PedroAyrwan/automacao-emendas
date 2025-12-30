@@ -25,7 +25,12 @@ LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L
 
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
+
+# Link da Folha Geral
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
+
+# Link Novo (Educação) - OBS: Verifique se este link retorna dados de RH ou Receita
+URL_FOLHA_EDUCACAO = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
 NOME_PLANILHA_GOOGLE = "Robo_Caninde"
@@ -56,7 +61,7 @@ def conectar_google():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     return gspread.authorize(creds).open(NOME_PLANILHA_GOOGLE)
 
-# --- TAREFAS ---
+# --- TAREFA 1: EMENDAS ---
 def tarefa_emendas(planilha_google):
     print("\n--- 1. Atualizando Emendas... ---")
     df = pd.read_csv(URL_EMENDAS, encoding='latin1', sep=';', on_bad_lines='skip')
@@ -67,6 +72,7 @@ def tarefa_emendas(planilha_google):
     aba.update('A1', [df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     return len(df_filtrado)
 
+# --- TAREFA 2: RECEITAS ---
 def tarefa_receitas(planilha_google):
     print("\n--- 2. Atualizando Receitas... ---")
     response = requests.get(URL_RECEITAS)
@@ -83,18 +89,24 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA 3: FOLHA (CORREÇÃO DE VAZIOS VARIÁVEIS) ---
-def tarefa_folha(planilha_google):
-    print("\n--- 3. Atualizando Folha de Pagamento... ---")
+# --- LÓGICA DE PROCESSAMENTO DE FOLHA (Scanner Inteligente) ---
+def processar_dados_folha(url_alvo, nome_aba, planilha_google):
+    print(f"\n--- Processando Folha: {nome_aba} ... ---")
     
-    url_final = URL_FOLHA
-    if "total=10000" not in url_final:
-        url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
-        if "total=10000" not in url_final: url_final += "&total=10000"
+    # Ajusta total para 10000 se necessário
+    url_final = url_alvo
+    if "total=" in url_final and "total=10000" not in url_final:
+         url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
+    elif "total=" not in url_final and "?" in url_final:
+         url_final += "&total=10000"
     
-    print(f"🔗 Baixando dados...")
+    print(f"🔗 Baixando dados de {url_final[:60]}...")
     response = requests.get(url_final)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except:
+        print(f"❌ Erro ao baixar URL para {nome_aba}")
+        return 0
     
     conteudo = response.content.decode('latin1')
     linhas = conteudo.split('\n')
@@ -102,28 +114,23 @@ def tarefa_folha(planilha_google):
     dados_processados = []
     cargo_atual = "" 
     
-    print(f"🔄 Processando {len(linhas)} linhas brutas...")
+    print(f"🔄 Analisando {len(linhas)} linhas...")
     
     for linha in linhas:
         partes = [p.strip() for p in linha.split(';')]
         
-        # Poda básica de segurança
         while len(partes) > 0 and partes[-1] == "":
             partes.pop()
             
         if len(partes) < 5: continue
         if len(partes) > 3 and (partes[2] == "CPF" or "Matrícula" in partes[3]): continue
             
-        # Captura Cargo
         if len(partes) > 10 and partes[2] == "" and partes[10] != "":
             cargo_atual = partes[10]
             continue
             
-        # Captura Pessoa
         if len(partes) > 5 and partes[2] != "" and partes[4] != "":
-            
             try:
-                # --- DADOS PESSOAIS ---
                 cpf = partes[2]
                 matricula = partes[3]
                 nome = partes[4]
@@ -131,7 +138,7 @@ def tarefa_folha(planilha_google):
                 vinculo = partes[7]     
                 secretaria = partes[9]  
                 
-                # --- ÂNCORA NO ANO ---
+                # ÂNCORA 2025
                 if "2025" in partes:
                     idx_ano = len(partes) - 1 - partes[::-1].index("2025")
                 elif "2024" in partes:
@@ -139,23 +146,14 @@ def tarefa_folha(planilha_google):
                 else:
                     continue
 
-                # Pega Mês (antes) e Base/Bruta (depois)
                 mes = partes[idx_ano - 1]
                 ano = partes[idx_ano]
                 salario_base = partes[idx_ano + 1]
                 remun_bruta = partes[idx_ano + 2]
                 
-                # --- CORREÇÃO DEFINITIVA (SCANNER DE VAZIOS) ---
-                # Pega tudo o que sobrou depois da Remuneração Bruta
+                # SCANNER DE VAZIOS (FINAL DA LINHA)
                 resto_linha = partes[idx_ano + 3 : ]
-                
-                # Limpa os campos vazios desse resto
                 valores_financeiros = [x for x in resto_linha if x != ""]
-                
-                # Agora temos certeza:
-                # O último da lista é o Líquido
-                # O penúltimo é o Desconto
-                # (Não importa quantos vazios tinham no meio)
                 
                 if len(valores_financeiros) >= 2:
                     descontos = valores_financeiros[-2]
@@ -191,8 +189,9 @@ def tarefa_folha(planilha_google):
     
     if not df.empty:
         df = df[df["Nome_Servidor"] != ""]
+    else:
+        print(f"⚠️ Atenção: Nenhum servidor encontrado para {nome_aba}. Verifique se o link é de RH.")
 
-    nome_aba = "folha_pagamento_geral"
     try:
         aba = planilha_google.worksheet(nome_aba)
     except:
@@ -201,28 +200,35 @@ def tarefa_folha(planilha_google):
     aba.clear()
     
     if not df.empty:
-        # ORDEM FINAL DAS COLUNAS
         colunas_ordenadas = [
             "Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", 
             "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", 
             "Descontos", "Valor_Liquido"
         ]
-        
         df = df.reindex(columns=colunas_ordenadas)
         dados_final = [df.columns.values.tolist()] + df.values.tolist()
         aba.update('A1', dados_final)
     
-    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} servidores.")
+    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} registros.")
     return len(df)
+
+# --- TAREFAS DE FOLHA (Usam a mesma lógica) ---
+def tarefa_folha_geral(planilha_google):
+    return processar_dados_folha(URL_FOLHA, "folha_pagamento_geral", planilha_google)
+
+def tarefa_folha_educacao(planilha_google):
+    return processar_dados_folha(URL_FOLHA_EDUCACAO, "folha_pagamento_educacao", planilha_google)
 
 # --- EXECUÇÃO ---
 try:
     planilha = conectar_google()
+    
     res1 = tarefa_emendas(planilha)
     res2 = tarefa_receitas(planilha)
-    res3 = tarefa_folha(planilha)
+    res3 = tarefa_folha_geral(planilha)
+    res4 = tarefa_folha_educacao(planilha)
     
-    resumo = f"Relatório Canindé:\n- Emendas: {res1}\n- Receitas: {res2}\n- Servidores na Folha: {res3}"
+    resumo = f"Relatório Canindé:\n- Emendas: {res1}\n- Receitas: {res2}\n- Folha Geral: {res3}\n- Folha Educação: {res4}"
     enviar_email("✅ Robô Canindé: Tudo Atualizado", resumo)
     print("🚀 Sucesso total!")
 except Exception as e:
