@@ -32,8 +32,9 @@ URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/1
 # Link da Folha Geral (RH - Serviço 193)
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
-# Link da Folha Educação (Atualizado - Serviço 350 - Receita)
-URL_FOLHA_EDUCACAO = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/350/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
+# Link da Folha Educação (RH - Serviço 350 - CORRIGIDO PARA RH)
+# Se fosse receita, a lógica de folha falharia. Ajustei para o endpoint de RH do serviço 350.
+URL_FOLHA_EDUCACAO = "https://agtransparenciarhserviceprd.agapesistemas.com.br/350/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=2000&docType=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
 NOME_PLANILHA_GOOGLE = "Robo_Caninde"
@@ -75,10 +76,9 @@ def tarefa_emendas(planilha_google):
     aba.update('A1', [df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     return len(df_filtrado)
 
-# --- TAREFA: PROCESSAR RECEITAS (Manual e Robusto) ---
+# --- TAREFA: PROCESSAR RECEITAS ---
 def processar_receitas(url_alvo, nome_aba, planilha_google):
     print(f"\n--- Processando Receitas: {nome_aba} ... ---")
-    
     try:
         response = requests.get(url_alvo)
         response.raise_for_status()
@@ -87,81 +87,43 @@ def processar_receitas(url_alvo, nome_aba, planilha_google):
 
     conteudo = response.content.decode('latin1')
     linhas = conteudo.split('\n')
-    
-    # 1. Encontrar onde começam os dados (Linha de Cabeçalho "ANO;")
     idx_inicio = -1
     for i, linha in enumerate(linhas):
         if linha.strip().startswith("ANO;"):
             idx_inicio = i
             break
-    
-    if idx_inicio == -1:
-        # Se não achou "ANO;", tenta pular umas 5 linhas padrão
-        idx_inicio = 5 
+    if idx_inicio == -1: idx_inicio = 5
     
     dados = []
-    # Processa as linhas ABAIXO do cabeçalho
-    print(f"🔄 Processando a partir da linha {idx_inicio + 2}...")
-    
     for linha in linhas[idx_inicio + 1:]:
         partes = linha.split(';')
-        
-        # Filtra linhas vazias ou de rodapé
         if len(partes) < 5: continue
-        
-        # O arquivo tem colunas vazias extras. Vamos pegar pelos índices fixos observados:
-        # 0: Ano
-        # 2: Código (As vezes vem no 1 ou 2 dependendo do ; extra)
-        # Vamos limpar vazios para pegar sequencialmente? Não, melhor índice fixo do CSV.
-        # No CSV enviado: 2025;;1000...;;;RECEITAS...
-        # 0: 2025
-        # 2: Código
-        # 5: Descrição
-        # 6: Previsto
-        # 8: Realizado
-        # 9: %
-        
         try:
-            # Garante que tem tamanho suficiente
             while len(partes) < 10: partes.append("")
-            
             p_ano = partes[0].strip()
-            # Se não tiver ano, ignora (pode ser linha de total ou lixo)
             if not p_ano.isdigit(): continue
-            
-            p_codigo = partes[2].strip()
-            p_descricao = partes[5].strip()
-            p_previsto = partes[6].strip()
-            p_realizado = partes[8].strip()
-            p_porc = partes[9].strip()
-            
-            dados.append([p_ano, p_codigo, p_descricao, p_previsto, p_realizado, p_porc])
-        except:
-            continue
+            dados.append([p_ano, partes[2].strip(), partes[5].strip(), partes[6].strip(), partes[8].strip(), partes[9].strip()])
+        except: continue
             
     df = pd.DataFrame(dados, columns=['Ano', 'Codigo', 'Descricao', 'Previsto', 'Realizado', '%'])
-    
     try:
         aba = planilha_google.worksheet(nome_aba)
     except:
         aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=15)
-    
     aba.clear()
-    
     if not df.empty:
         aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
-    
-    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} registros.")
     return len(df)
 
-# --- TAREFA: PROCESSAR FOLHA (RH) ---
+# --- TAREFA: PROCESSAR FOLHA (RH - Lógica Geral) ---
 def processar_folha(url_alvo, nome_aba, planilha_google):
     print(f"\n--- Processando Folha RH: {nome_aba} ... ---")
     
     url_final = url_alvo
+    # Ajusta total se necessário, respeitando o 2000 da educação
     if "rh/relatorios" in url_final:
-        if "total=" in url_final and "total=10000" not in url_final:
-             url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
+        if "total=" in url_final and "total=2000" not in url_final and "total=10000" not in url_final:
+             url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000").replace("total=99", "total=10000")
         elif "total=" not in url_final and "?" in url_final:
              url_final += "&total=10000"
     
@@ -186,12 +148,15 @@ def processar_folha(url_alvo, nome_aba, planilha_google):
         if len(partes) < 5: continue
         if len(partes) > 3 and (partes[2] == "CPF" or "Matrícula" in partes[3]): continue
         
+        # Captura Cargo
         if len(partes) > 10 and partes[2] == "" and partes[10] != "":
             cargo_atual = partes[10]
             continue
             
+        # Captura Pessoa
         if len(partes) > 5 and partes[2] != "" and partes[4] != "":
             try:
+                # ÂNCORA 2025 para achar os dados financeiros
                 if "2025" in partes:
                     idx_ano = len(partes) - 1 - partes[::-1].index("2025")
                 elif "2024" in partes:
@@ -204,6 +169,7 @@ def processar_folha(url_alvo, nome_aba, planilha_google):
                 salario_base = partes[idx_ano + 1]
                 remun_bruta = partes[idx_ano + 2]
                 
+                # SCANNER INTELIGENTE DE VAZIOS
                 resto_linha = partes[idx_ano + 3 : ]
                 valores_financeiros = [x for x in resto_linha if x != ""]
                 
@@ -244,11 +210,13 @@ def processar_folha(url_alvo, nome_aba, planilha_google):
         aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=15)
     
     aba.clear()
+    
     if not df.empty:
         colunas_ordenadas = ["Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", "Descontos", "Valor_Liquido"]
         df = df.reindex(columns=colunas_ordenadas)
         aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     
+    print(f"✅ Aba '{nome_aba}' atualizada: {len(df)} registros.")
     return len(df)
 
 # --- EXECUÇÃO PRINCIPAL ---
@@ -269,24 +237,22 @@ if __name__ == "__main__":
         except Exception as e:
             status["Emendas"] = f"❌ Erro: {str(e)}"
 
-        # Receitas Gerais (193)
         try:
             qtd = processar_receitas(URL_RECEITAS, "Receitas_2025", planilha)
             status["Receitas"] = f"✅ Sucesso ({qtd} linhas)"
         except Exception as e:
             status["Receitas"] = f"❌ Erro: {str(e)}"
 
-        # Folha Geral (193) - RH
         try:
             qtd = processar_folha(URL_FOLHA, "folha_pagamento_geral", planilha)
             status["Folha_Geral"] = f"✅ Sucesso ({qtd} servidores)"
         except Exception as e:
             status["Folha_Geral"] = f"❌ Falha: {str(e)}"
 
-        # Folha Educação (350) - RECEITA (Link fornecido é de receita)
+        # AGORA USAMOS A LÓGICA DE FOLHA (RH) PARA A EDUCAÇÃO
         try:
-            qtd = processar_receitas(URL_FOLHA_EDUCACAO, "folha_pagamento_educacao", planilha)
-            status["Folha_Educacao"] = f"✅ Sucesso ({qtd} linhas)"
+            qtd = processar_folha(URL_FOLHA_EDUCACAO, "folha_pagamento_educacao", planilha)
+            status["Folha_Educacao"] = f"✅ Sucesso ({qtd} servidores)"
         except Exception as e:
             status["Folha_Educacao"] = f"❌ Falha: {str(e)}"
 
