@@ -25,13 +25,15 @@ STRING_DESTINATARIOS = limpar_senha(os.getenv("EMAIL_DESTINATARIO"))
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L8jxwAp4ermInaUR74bVs/edit?usp=sharing"
 
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
+
+# Link de Receitas (Geral)
 URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
 
-# Link da Folha Geral
+# Link da Folha Geral (RH)
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
-# Link da Folha Educação (Corrigido: &total e removido texto extra)
-URL_FOLHA_EDUCACAO = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
+# Link da Folha Educação (NOVO LINK SERVIÇO 350)
+URL_FOLHA_EDUCACAO = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/350/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
 NOME_PLANILHA_GOOGLE = "Robo_Caninde"
@@ -94,22 +96,22 @@ def tarefa_receitas(planilha_google):
 def processar_dados_folha(url_alvo, nome_aba, planilha_google):
     print(f"\n--- Processando Folha: {nome_aba} ... ---")
     
-    # Ajusta total para 10000
+    # Ajusta total para 10000 apenas se o link parecer ser de RH
     url_final = url_alvo
-    if "total=" in url_final and "total=10000" not in url_final:
-         url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
-    elif "total=" not in url_final and "?" in url_final:
-         url_final += "&total=10000"
+    if "rh/relatorios" in url_final:
+        if "total=" in url_final and "total=10000" not in url_final:
+             url_final = url_final.replace("total=300", "total=10000").replace("total=5000", "total=10000")
+        elif "total=" not in url_final and "?" in url_final:
+             url_final += "&total=10000"
     
     print(f"🔗 Baixando dados de {url_final[:60]}...")
     
-    # --- CAPTURA DE ERRO HTTP (404, 500, etc) ---
+    # --- CAPTURA DE ERRO HTTP ---
     try:
         response = requests.get(url_final)
-        response.raise_for_status() # Isso dispara o erro se for 404, 500, etc.
+        response.raise_for_status() 
     except requests.exceptions.HTTPError as err:
-        # Se for erro HTTP (Link quebrado, servidor fora), lança mensagem clara
-        raise Exception(f"Erro HTTP {response.status_code}: Link inacessível ou incorreto.")
+        raise Exception(f"Erro HTTP {response.status_code}: Link inacessível.")
     except Exception as err:
         raise Exception(f"Erro de Conexão: {str(err)}")
     
@@ -195,9 +197,7 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
     if not df.empty:
         df = df[df["Nome_Servidor"] != ""]
     else:
-        # Se baixou o arquivo mas não achou ninguém (pode ser erro de filtro)
-        print(f"⚠️ Atenção: Nenhum servidor encontrado para {nome_aba}.")
-        # Não lança erro, apenas avisa que veio vazio
+        print(f"⚠️ Atenção: Nenhum servidor encontrado para {nome_aba}. (Provável erro de link ou filtro)")
 
     try:
         aba = planilha_google.worksheet(nome_aba)
@@ -283,9 +283,8 @@ if __name__ == "__main__":
         # --- MONTA O E-MAIL FINAL ---
         assunto_email = "🤖 Robô Canindé: Relatório de Execução"
         
-        # Se tiver qualquer erro, muda o assunto para ALERTA
         if any("❌" in v for v in status.values()):
-            assunto_email = "⚠️ Robô Canindé: ALERTA DE ERRO (Veja Detalhes)"
+            assunto_email = "⚠️ Robô Canindé: ALERTA DE ERRO"
 
         mensagem_final = f"""
         Resumo da execução do robô:
