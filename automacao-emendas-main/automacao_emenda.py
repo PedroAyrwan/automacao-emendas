@@ -8,7 +8,7 @@ import os
 import requests
 from io import StringIO
 from dotenv import load_dotenv
-import traceback # Importante para pegar detalhes do erro
+import traceback
 
 # --- CONFIGURAÇÕES INICIAIS ---
 load_dotenv()
@@ -30,8 +30,8 @@ URL_RECEITAS = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/1
 # Link da Folha Geral
 URL_FOLHA = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
-# Link Novo (Educação)
-URL_FOLHA_EDUCACAO = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
+# Link da Folha Educação (Corrigido: &total e removido texto extra)
+URL_FOLHA_EDUCACAO = "https://agtransparenciarhserviceprd.agapesistemas.com.br/193/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes=11&ano=2025&total=10000&docType=csv"
 
 CREDENCIAIS_JSON = 'credentials.json'
 NOME_PLANILHA_GOOGLE = "Robo_Caninde"
@@ -102,8 +102,16 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
          url_final += "&total=10000"
     
     print(f"🔗 Baixando dados de {url_final[:60]}...")
-    response = requests.get(url_final)
-    response.raise_for_status() # Vai gerar erro se o link estiver quebrado
+    
+    # --- CAPTURA DE ERRO HTTP (404, 500, etc) ---
+    try:
+        response = requests.get(url_final)
+        response.raise_for_status() # Isso dispara o erro se for 404, 500, etc.
+    except requests.exceptions.HTTPError as err:
+        # Se for erro HTTP (Link quebrado, servidor fora), lança mensagem clara
+        raise Exception(f"Erro HTTP {response.status_code}: Link inacessível ou incorreto.")
+    except Exception as err:
+        raise Exception(f"Erro de Conexão: {str(err)}")
     
     conteudo = response.content.decode('latin1')
     linhas = conteudo.split('\n')
@@ -148,7 +156,7 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
                 salario_base = partes[idx_ano + 1]
                 remun_bruta = partes[idx_ano + 2]
                 
-                # SCANNER DE VAZIOS (FINAL DA LINHA)
+                # SCANNER DE VAZIOS
                 resto_linha = partes[idx_ano + 3 : ]
                 valores_financeiros = [x for x in resto_linha if x != ""]
                 
@@ -186,6 +194,10 @@ def processar_dados_folha(url_alvo, nome_aba, planilha_google):
     
     if not df.empty:
         df = df[df["Nome_Servidor"] != ""]
+    else:
+        # Se baixou o arquivo mas não achou ninguém (pode ser erro de filtro)
+        print(f"⚠️ Atenção: Nenhum servidor encontrado para {nome_aba}.")
+        # Não lança erro, apenas avisa que veio vazio
 
     try:
         aba = planilha_google.worksheet(nome_aba)
@@ -215,7 +227,6 @@ def tarefa_folha_educacao(planilha_google):
 
 # --- EXECUÇÃO PRINCIPAL COM RELATÓRIO DE ERROS ---
 if __name__ == "__main__":
-    # Variáveis de status para o relatório
     status = {
         "Conexao": "Pendente",
         "Emendas": "Pendente",
@@ -231,7 +242,7 @@ if __name__ == "__main__":
             status["Conexao"] = "✅ OK"
         except Exception as e:
             status["Conexao"] = f"❌ Erro Crítico: {str(e)}"
-            raise e # Se não conectar, nem adianta continuar
+            raise e 
 
         # 2. Executa Emendas
         try:
@@ -255,7 +266,7 @@ if __name__ == "__main__":
             status["Folha_Geral"] = f"✅ Sucesso ({qtd} servidores)"
         except Exception as e:
             print(f"Erro na Folha Geral: {e}")
-            status["Folha_Geral"] = f"❌ Erro: {str(e)}"
+            status["Folha_Geral"] = f"❌ Falha: {str(e)}"
 
         # 5. Executa Folha Educação
         try:
@@ -263,39 +274,38 @@ if __name__ == "__main__":
             status["Folha_Educacao"] = f"✅ Sucesso ({qtd} servidores)"
         except Exception as e:
             print(f"Erro na Folha Educação: {e}")
-            status["Folha_Educacao"] = f"❌ Erro: {str(e)}"
+            status["Folha_Educacao"] = f"❌ Falha: {str(e)}"
 
     except Exception as e:
-        # Captura erro genérico se algo fora do comum acontecer
         print(f"Erro fatal no script: {e}")
 
     finally:
-        # --- MONTA O E-MAIL FINAL (SEMPRE ENVIA) ---
+        # --- MONTA O E-MAIL FINAL ---
         assunto_email = "🤖 Robô Canindé: Relatório de Execução"
         
-        # Verifica se houve algum erro para mudar o ícone do assunto
+        # Se tiver qualquer erro, muda o assunto para ALERTA
         if any("❌" in v for v in status.values()):
-            assunto_email = "⚠️ Robô Canindé: AVISO DE ERRO"
+            assunto_email = "⚠️ Robô Canindé: ALERTA DE ERRO (Veja Detalhes)"
 
         mensagem_final = f"""
-        Olá! Aqui está o resumo da execução do robô:
+        Resumo da execução do robô:
 
         🔌 Conexão Google: {status['Conexao']}
         
-        💰 Emendas Parlamentares:
+        💰 Emendas:
         {status['Emendas']}
         
-        📉 Receitas Municipais:
+        📉 Receitas:
         {status['Receitas']}
         
-        👥 Folha de Pagamento (Geral):
+        👥 Folha Geral:
         {status['Folha_Geral']}
         
-        🎓 Folha de Pagamento (Educação):
+        🎓 Folha Educação:
         {status['Folha_Educacao']}
         
         ---------------------------------------
-        Data de execução: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}
+        Executado em: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}
         """
         
         enviar_email(assunto_email, mensagem_final)
