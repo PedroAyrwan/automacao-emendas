@@ -83,7 +83,7 @@ def tarefa_receitas(planilha_google):
     aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
     return len(df)
 
-# --- TAREFA 3: FOLHA (LÓGICA DE ÂNCORA "2025") ---
+# --- TAREFA 3: FOLHA (CORREÇÃO DE VAZIOS VARIÁVEIS) ---
 def tarefa_folha(planilha_google):
     print("\n--- 3. Atualizando Folha de Pagamento... ---")
     
@@ -107,13 +107,11 @@ def tarefa_folha(planilha_google):
     for linha in linhas:
         partes = [p.strip() for p in linha.split(';')]
         
-        # Poda básica
+        # Poda básica de segurança
         while len(partes) > 0 and partes[-1] == "":
             partes.pop()
             
         if len(partes) < 5: continue
-            
-        # Ignora Cabeçalhos
         if len(partes) > 3 and (partes[2] == "CPF" or "Matrícula" in partes[3]): continue
             
         # Captura Cargo
@@ -133,38 +131,41 @@ def tarefa_folha(planilha_google):
                 vinculo = partes[7]     
                 secretaria = partes[9]  
                 
-                # --- ESTRATÉGIA DE ÂNCORA (Localiza o Ano) ---
-                # Em vez de contar, procuramos onde está escrito "2025"
+                # --- ÂNCORA NO ANO ---
                 if "2025" in partes:
-                    # Acha o último índice onde aparece 2025 (para evitar erros com nomes)
                     idx_ano = len(partes) - 1 - partes[::-1].index("2025")
                 elif "2024" in partes:
                     idx_ano = len(partes) - 1 - partes[::-1].index("2024")
                 else:
-                    # Se não achar o ano, pula a linha (segurança)
                     continue
 
-                # --- MAPEAMENTO RELATIVO AO ANO ---
-                # ... | 40 | 11 | 2025 | Base | Bruta | "" | Desc | Liq
-                #      -2   -1    ^ (idx)
-                
+                # Pega Mês (antes) e Base/Bruta (depois)
+                mes = partes[idx_ano - 1]
                 ano = partes[idx_ano]
-                mes = partes[idx_ano - 1] # Mês vem logo antes do ano
-                
-                # Ignoramos idx_ano - 2 (que é onde está o 40)
-                
                 salario_base = partes[idx_ano + 1]
                 remun_bruta = partes[idx_ano + 2]
                 
-                # Lógica para achar Descontos e Líquido (pode ter gap vazio ou não)
-                # Verifica se +3 existe e é vazio
-                if idx_ano + 3 < len(partes) and partes[idx_ano + 3] == "":
-                     descontos = partes[idx_ano + 4]
-                     val_liquido = partes[idx_ano + 5]
+                # --- CORREÇÃO DEFINITIVA (SCANNER DE VAZIOS) ---
+                # Pega tudo o que sobrou depois da Remuneração Bruta
+                resto_linha = partes[idx_ano + 3 : ]
+                
+                # Limpa os campos vazios desse resto
+                valores_financeiros = [x for x in resto_linha if x != ""]
+                
+                # Agora temos certeza:
+                # O último da lista é o Líquido
+                # O penúltimo é o Desconto
+                # (Não importa quantos vazios tinham no meio)
+                
+                if len(valores_financeiros) >= 2:
+                    descontos = valores_financeiros[-2]
+                    val_liquido = valores_financeiros[-1]
+                elif len(valores_financeiros) == 1:
+                    descontos = "0,00"
+                    val_liquido = valores_financeiros[-1]
                 else:
-                     # Se não tiver gap vazio
-                     descontos = partes[idx_ano + 3]
-                     val_liquido = partes[idx_ano + 4]
+                    descontos = "0,00"
+                    val_liquido = "0,00"
 
             except (IndexError, ValueError):
                 continue
@@ -200,14 +201,13 @@ def tarefa_folha(planilha_google):
     aba.clear()
     
     if not df.empty:
-        # FORÇA A ORDEM DAS COLUNAS: Mês vem antes do Ano
+        # ORDEM FINAL DAS COLUNAS
         colunas_ordenadas = [
             "Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", 
             "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", 
             "Descontos", "Valor_Liquido"
         ]
         
-        # Reorganiza e salva
         df = df.reindex(columns=colunas_ordenadas)
         dados_final = [df.columns.values.tolist()] + df.values.tolist()
         aba.update('A1', dados_final)
