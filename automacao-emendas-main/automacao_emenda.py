@@ -259,7 +259,8 @@ if __name__ == "__main__":
         "Receitas": "Pendente",
         "Folha_Geral": "Pendente",
         "Folha_Educacao": "Pendente",
-        "Folha_Saude": "Pendente"
+        "Folha_Saude": "Pendente",
+        "Folha_Social": "Pendente"
     }
     
     try:
@@ -305,6 +306,13 @@ if __name__ == "__main__":
         except Exception as e:
             status["Folha_Saude"] = f"❌ Falha: {str(e)}"
 
+        # 6. FOLHA ASSISTÊNCIA SOCIAL (Dinâmica - ID 299)
+        try:
+            qtd = processar_folha_dinamica("299", "folha_pagamento_social", planilha)
+            status["Folha_Social"] = f"✅ Sucesso ({qtd} servidores)"
+        except Exception as e:
+            status["Folha_Social"] = f"❌ Falha: {str(e)}"
+
     except Exception as e:
         print(f"Erro fatal: {e}")
 
@@ -320,6 +328,7 @@ if __name__ == "__main__":
         👥 Folha Geral: {status['Folha_Geral']}
         🎓 Folha Educação: {status['Folha_Educacao']}
         🏥 Folha Saúde: {status['Folha_Saude']}
+        🤝 Folha Social: {status['Folha_Social']}
         """
         enviar_email(assunto, msg)
         print("🏁 Fim.")
