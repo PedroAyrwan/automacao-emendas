@@ -209,50 +209,39 @@ def executar_extracao_rh(url, nome_aba, planilha_google, ano_ref):
     
     return len(df)
 
-def processar_folha_dinamica(servico_id, nome_aba, planilha_google):
+def processar_folha_dinamica(servico_id, nome_aba, planilha_google, limite_meses_retrocesso=12):
     """
-    Gerencia a lógica de data com loop de tentativas:
-    1. Tenta Mês/Ano Atual.
-    2. Se falhar, calcula o mês anterior (considerando virada de ano) e tenta novamente.
+    Tenta baixar dados começando do mês atual.
+    Se falhar, recua 1 mês e tenta de novo, repetindo até o limite (padrão 12 meses).
     """
     print(f"\n--- Processando Dinâmico: {nome_aba} (ID {servico_id}) ---")
     
     agora = datetime.now()
-    mes_corrente = agora.month
-    ano_corrente = agora.year
+    mes_busca = agora.month
+    ano_busca = agora.year
     
-    # Lógica para definir o mês/ano anterior (Tratamento de Virada de Ano)
-    if mes_corrente == 1:
-        mes_anterior = 12
-        ano_anterior = ano_corrente - 1
-    else:
-        mes_anterior = mes_corrente - 1
-        ano_anterior = ano_corrente
-
-    # Lista de tentativas ordenadas
-    tentativas = [
-        {"mes": mes_corrente, "ano": ano_corrente}, # Prioridade 1: Mês Atual
-        {"mes": mes_anterior, "ano": ano_anterior}  # Prioridade 2: Mês Anterior
-    ]
-    
-    for tentativa in tentativas:
-        t_mes = tentativa["mes"]
-        t_ano = tentativa["ano"]
+    for tentativa in range(limite_meses_retrocesso):
+        print(f"🔄 Tentativa {tentativa + 1}/{limite_meses_retrocesso}: Buscando competência {mes_busca}/{ano_busca}...")
         
-        print(f"🔄 Tentando competência {t_mes}/{t_ano}...")
+        url = montar_url_rh(servico_id, mes_busca, ano_busca)
         
-        url = montar_url_rh(servico_id, t_mes, t_ano)
-        
-        # IMPORTANTE: Passamos t_ano para a função de extração saber qual ano procurar no CSV
-        qtd = executar_extracao_rh(url, nome_aba, planilha_google, t_ano)
+        # Tenta baixar e processar usando o ano da busca como referência
+        qtd = executar_extracao_rh(url, nome_aba, planilha_google, ano_busca)
         
         if qtd > 0:
-            print(f"✅ Sucesso! {qtd} registros encontrados na competência {t_mes}/{t_ano}.")
+            print(f"✅ SUCESSO! Dados encontrados em {mes_busca}/{ano_busca} ({qtd} registros).")
             return qtd
+        
+        print(f"⚠️ Competência {mes_busca}/{ano_busca} vazia. Recuando 1 mês...")
+        
+        # Lógica para voltar 1 mês (tratando virada de ano: Janeiro -> Dezembro do ano anterior)
+        if mes_busca == 1:
+            mes_busca = 12
+            ano_busca -= 1
         else:
-            print(f"⚠️ Competência {t_mes}/{t_ano} vazia ou indisponível. Tentando próxima...")
+            mes_busca -= 1
 
-    print("❌ Falha: Nenhum dado encontrado nas tentativas (Atual e Anterior).")
+    print(f"❌ Falha: Nenhum dado encontrado após {limite_meses_retrocesso} meses de busca retroativa.")
     return 0
 
 # --- EXECUÇÃO PRINCIPAL ---
