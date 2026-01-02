@@ -211,45 +211,49 @@ def executar_extracao_rh(url, nome_aba, planilha_google, ano_ref):
 
 def processar_folha_dinamica(servico_id, nome_aba, planilha_google):
     """
-    Gerencia a lógica de data:
-    1. Tenta Mês Atual.
-    2. Se vazio, Tenta Mês Anterior.
+    Gerencia a lógica de data com loop de tentativas:
+    1. Tenta Mês/Ano Atual.
+    2. Se falhar, calcula o mês anterior (considerando virada de ano) e tenta novamente.
     """
     print(f"\n--- Processando Dinâmico: {nome_aba} (ID {servico_id}) ---")
     
     agora = datetime.now()
-    mes_atual = agora.month
-    ano_atual = agora.year
+    mes_corrente = agora.month
+    ano_corrente = agora.year
     
-    # 1. TENTATIVA: Mês Atual
-    print(f"🔄 Tentando competência {mes_atual}/{ano_atual}...")
-    url_atual = montar_url_rh(servico_id, mes_atual, ano_atual)
-    qtd = executar_extracao_rh(url_atual, nome_aba, planilha_google, ano_atual)
-    
-    if qtd > 0:
-        print(f"✅ Sucesso! {qtd} registros encontrados no mês {mes_atual}.")
-        return qtd
-    
-    # 2. TENTATIVA: Mês Anterior (Trava de Segurança)
-    print(f"⚠️ Mês {mes_atual} vazio ou indisponível. Recuando para mês anterior...")
-    
-    if mes_atual == 1:
-        mes_ant = 12
-        ano_ant = ano_atual - 1
+    # Lógica para definir o mês/ano anterior (Tratamento de Virada de Ano)
+    if mes_corrente == 1:
+        mes_anterior = 12
+        ano_anterior = ano_corrente - 1
     else:
-        mes_ant = mes_atual - 1
-        ano_ant = ano_atual
+        mes_anterior = mes_corrente - 1
+        ano_anterior = ano_corrente
+
+    # Lista de tentativas ordenadas
+    tentativas = [
+        {"mes": mes_corrente, "ano": ano_corrente}, # Prioridade 1: Mês Atual
+        {"mes": mes_anterior, "ano": ano_anterior}  # Prioridade 2: Mês Anterior
+    ]
+    
+    for tentativa in tentativas:
+        t_mes = tentativa["mes"]
+        t_ano = tentativa["ano"]
         
-    print(f"🔄 Tentando competência {mes_ant}/{ano_ant}...")
-    url_ant = montar_url_rh(servico_id, mes_ant, ano_ant)
-    qtd_ant = executar_extracao_rh(url_ant, nome_aba, planilha_google, ano_ant)
-    
-    if qtd_ant > 0:
-        print(f"✅ Sucesso no mês anterior! {qtd_ant} registros recuperados.")
-        return qtd_ant
-    else:
-        print("❌ Falha: Nenhum dado encontrado nem no mês atual nem no anterior.")
-        return 0
+        print(f"🔄 Tentando competência {t_mes}/{t_ano}...")
+        
+        url = montar_url_rh(servico_id, t_mes, t_ano)
+        
+        # IMPORTANTE: Passamos t_ano para a função de extração saber qual ano procurar no CSV
+        qtd = executar_extracao_rh(url, nome_aba, planilha_google, t_ano)
+        
+        if qtd > 0:
+            print(f"✅ Sucesso! {qtd} registros encontrados na competência {t_mes}/{t_ano}.")
+            return qtd
+        else:
+            print(f"⚠️ Competência {t_mes}/{t_ano} vazia ou indisponível. Tentando próxima...")
+
+    print("❌ Falha: Nenhum dado encontrado nas tentativas (Atual e Anterior).")
+    return 0
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
