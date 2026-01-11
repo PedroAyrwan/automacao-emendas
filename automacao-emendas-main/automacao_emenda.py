@@ -150,11 +150,9 @@ def executar_extracao_rh(url, nome_aba, planilha_google, ano_ref):
                 idx_ano = len(partes) - 1 - partes[::-1].index(ano_str) if ano_str in partes else -1
                 if idx_ano == -1: continue
 
-                # Identifica os valores financeiros e remove o "R$ "
-                # Usamos a lógica dinâmica para encontrar os últimos campos preenchidos (Descontos e Líquido)
                 sobra = [x for x in partes[idx_ano + 1:] if x != ""]
                 
-                # Tratamento de conversão para Float
+                # Tratamento de conversão para Float (Somas funcionando)
                 val_base = limpar_cifrao(partes[idx_ano + 1])
                 val_bruto = limpar_cifrao(partes[idx_ano + 2])
                 val_desc = limpar_cifrao(sobra[-2]) if len(sobra) >= 2 else 0.0
@@ -183,12 +181,21 @@ def executar_extracao_rh(url, nome_aba, planilha_google, ano_ref):
                "Descontos", "Valor_Liquido"]
     df = df.reindex(columns=colunas)
     
-    # IMPORTANTE: Usamos valueInputOption='USER_ENTERED' para o Sheets reconhecer o número limpo
+    # Envia como USER_ENTERED para o Sheets reconhecer o Float como número
     planilha_google.values_update(
         f"{nome_aba}!A1",
         params={'valueInputOption': 'USER_ENTERED'},
         body={'values': [df.columns.values.tolist()] + df.values.tolist()}
     )
+
+    # NOVO: Formata automaticamente as colunas financeiras (J a M) para Moeda R$
+    aba.format("J2:M15000", {
+        "numberFormat": {
+            "type": "CURRENCY",
+            "pattern": "R$ #,##0.00"
+        }
+    })
+    
     return len(df)
 
 def montar_url_rh(servico_id, mes, ano):
