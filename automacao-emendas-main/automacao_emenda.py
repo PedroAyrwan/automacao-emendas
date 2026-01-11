@@ -27,9 +27,26 @@ CREDENCIAIS_JSON = 'credentials.json'
 NOME_PLANILHA_GOOGLE = "Robo_Caninde"
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1Do1s1cAMxeEMNyV87etGV5L8jxwAp4ermInaUR74bVs/edit?usp=sharing"
 
-# --- LINKS ESTÁTICOS (Não mudam com a data) ---
+# --- LINKS ESTÁTICOS ---
 URL_EMENDAS = "https://www.tesourotransparente.gov.br/ckan/dataset/83e419da-1552-46bf-bfc3-05160b2c46c9/resource/66d69917-a5d8-4500-b4b2-ef1f5d062430/download/emendas-parlamentares.csv"
 URL_RECEITAS_FIXO = "https://agtransparenciaserviceprd.agapesistemas.com.br/service/193/orcamento/receita/orcamentaria/rel?alias=pmcaninde&recursoDESO=false&filtro=1&ano=2025&mes=12&de=01-01-2025&ate=31-12-2025&covid19=false&lc173=false&consolidado=false&tipo=csv"
+
+# --- FUNÇÃO DE CONVERSÃO EXCLUSIVA PARA FOLHA (String -> Float) ---
+def limpar_cifrao(valor_str):
+    """
+    Remove o prefixo 'R$ ' e limpa a string para que o Google Sheets
+    reconheça como número (mantendo o formato brasileiro de pontos e vírgulas).
+    """
+    if not valor_str or str(valor_str).strip() in ["", "-"]:
+        return 0.0
+    try:
+        # Remove o 'R$ ' e espaços, permitindo que o Sheets interprete o resto como número
+        limpo = str(valor_str).replace("R$", "").replace("\xa0", "").strip()
+        # Para garantir que a soma funcione, removemos o ponto de milhar e trocamos a vírgula por ponto
+        limpo = limpo.replace('.', '').replace(',', '.')
+        return float(limpo)
+    except:
+        return 0.0
 
 # --- FUNÇÃO DE E-MAIL ---
 def enviar_email(assunto, mensagem):
@@ -57,7 +74,7 @@ def conectar_google():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENCIAIS_JSON, scope)
     return gspread.authorize(creds).open(NOME_PLANILHA_GOOGLE)
 
-# --- 1. TAREFA EMENDAS (Estatica) ---
+# --- 1. TAREFA EMENDAS ---
 def tarefa_emendas(planilha_google):
     print("\n--- 1. Atualizando Emendas... ---")
     df = pd.read_csv(URL_EMENDAS, encoding='latin1', sep=';', on_bad_lines='skip')
@@ -68,7 +85,7 @@ def tarefa_emendas(planilha_google):
     aba.update('A1', [df_filtrado.columns.values.tolist()] + df_filtrado.values.tolist())
     return len(df_filtrado)
 
-# --- 2. TAREFA RECEITAS (Estatica - Link Fixo) ---
+# --- 2. TAREFA RECEITAS ---
 def processar_receitas(url_alvo, nome_aba, planilha_google):
     print(f"\n--- Processando Receitas: {nome_aba} ... ---")
     try:
@@ -79,12 +96,7 @@ def processar_receitas(url_alvo, nome_aba, planilha_google):
 
     conteudo = response.content.decode('latin1')
     linhas = conteudo.split('\n')
-    idx_inicio = -1
-    for i, linha in enumerate(linhas):
-        if linha.strip().startswith("ANO;"):
-            idx_inicio = i
-            break
-    if idx_inicio == -1: idx_inicio = 5
+    idx_inicio = next((i for i, l in enumerate(linhas) if l.strip().startswith("ANO;")), 5)
     
     dados = []
     for linha in linhas[idx_inicio + 1:]:
@@ -108,220 +120,117 @@ def processar_receitas(url_alvo, nome_aba, planilha_google):
     return len(df)
 
 # ==========================================
-#      LÓGICA DINÂMICA PARA FOLHAS (RH)
+#      LÓGICA PARA FOLHAS (RH) COM FLOAT
 # ==========================================
 
-def montar_url_rh(servico_id, mes, ano):
-    """Gera a URL do RH para um mês e ano específicos, forçando 10.000 registros."""
-    base = f"https://agtransparenciarhserviceprd.agapesistemas.com.br/{servico_id}/rh/relatorios/relacao_vinculos_oc"
-    # total=10000 garante que vem a lista completa
-    params = f"?regime=&matricula=&nome=&funcao=&mes={mes}&ano={ano}&total=10000&docType=csv"
-    return base + params
-
 def executar_extracao_rh(url, nome_aba, planilha_google, ano_ref):
-    """Baixa o CSV, processa e salva no Google Sheets. Retorna quantidade de linhas."""
-    print(f"   ↳ Baixando: {url}")
+    """Baixa o CSV, limpa o R$ e converte valores para que o Sheets possa somar."""
+    print(f"   ↳ Processando Folha: {nome_aba}")
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
-    except Exception as err:
-        print(f"     Erro conexão: {err}")
-        return 0
+    except: return 0
     
     conteudo = response.content.decode('latin1')
     linhas = conteudo.split('\n')
-    
     dados_processados = []
     cargo_atual = ""
     ano_str = str(ano_ref) 
     
     for linha in linhas:
         partes = [p.strip() for p in linha.split(';')]
-        while len(partes) > 0 and partes[-1] == "": partes.pop()
+        if len(partes) < 5 or "Matrícula" in partes[3]: continue
         
-        if len(partes) < 5: continue
-        if len(partes) > 3 and (partes[2] == "CPF" or "Matrícula" in partes[3]): continue
-        
-        # Captura Cargo (linha de cabeçalho de grupo)
         if len(partes) > 10 and partes[2] == "" and partes[10] != "":
             cargo_atual = partes[10]
             continue
             
-        # Captura Pessoa
         if len(partes) > 5 and partes[2] != "" and partes[4] != "":
             try:
-                # Procura o Ano de Referência na linha para alinhar as colunas
-                if ano_str in partes:
-                    idx_ano = len(partes) - 1 - partes[::-1].index(ano_str)
-                else:
-                    # Fallback: Tenta achar 2025 ou 2024 se o ano_ref não estiver explícito
-                    if "2025" in partes: idx_ano = len(partes) - 1 - partes[::-1].index("2025")
-                    elif "2024" in partes: idx_ano = len(partes) - 1 - partes[::-1].index("2024")
-                    else: continue
+                idx_ano = len(partes) - 1 - partes[::-1].index(ano_str) if ano_str in partes else -1
+                if idx_ano == -1: continue
 
-                mes_dado = partes[idx_ano - 1]
-                ano_dado = partes[idx_ano]
-                salario_base = partes[idx_ano + 1]
-                remun_bruta = partes[idx_ano + 2]
+                # Identifica os valores financeiros e remove o "R$ "
+                # Usamos a lógica dinâmica para encontrar os últimos campos preenchidos (Descontos e Líquido)
+                sobra = [x for x in partes[idx_ano + 1:] if x != ""]
                 
-                resto_linha = partes[idx_ano + 3 : ]
-                valores_financeiros = [x for x in resto_linha if x != ""]
-                
-                if len(valores_financeiros) >= 2:
-                    descontos = valores_financeiros[-2]
-                    val_liquido = valores_financeiros[-1]
-                elif len(valores_financeiros) == 1:
-                    descontos = "0,00"
-                    val_liquido = valores_financeiros[-1]
-                else:
-                    descontos = "0,00"
-                    val_liquido = "0,00"
+                # Tratamento de conversão para Float
+                val_base = limpar_cifrao(partes[idx_ano + 1])
+                val_bruto = limpar_cifrao(partes[idx_ano + 2])
+                val_desc = limpar_cifrao(sobra[-2]) if len(sobra) >= 2 else 0.0
+                val_liq = limpar_cifrao(sobra[-1])
 
-                pessoa = {
+                dados_processados.append({
                     "Matricula": partes[3], "Nome_Servidor": partes[4], "CPF": partes[2],
                     "Cargo": cargo_atual, "Vinculo": partes[7], "Secretaria": partes[9],
-                    "Data_Admissao": partes[5], "Mes": mes_dado, "Ano": ano_dado,
-                    "Salario_Base": salario_base, "Remun_Bruta": remun_bruta,
-                    "Descontos": descontos, "Valor_Liquido": val_liquido
-                }
-                dados_processados.append(pessoa)
+                    "Data_Admissao": partes[5], "Mes": partes[idx_ano - 1], "Ano": partes[idx_ano],
+                    "Salario_Base": val_base, "Remun_Bruta": val_bruto,
+                    "Descontos": val_desc, "Valor_Liquido": val_liq
+                })
             except: continue
 
-    if not dados_processados:
-        return 0
+    if not dados_processados: return 0
 
     df = pd.DataFrame(dados_processados)
-    if not df.empty: df = df[df["Nome_Servidor"] != ""]
-    
     try:
         aba = planilha_google.worksheet(nome_aba)
     except:
         aba = planilha_google.add_worksheet(title=nome_aba, rows=15000, cols=15)
     
     aba.clear()
+    colunas = ["Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", 
+               "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", 
+               "Descontos", "Valor_Liquido"]
+    df = df.reindex(columns=colunas)
     
-    if not df.empty:
-        colunas_ordenadas = ["Matricula", "Nome_Servidor", "CPF", "Cargo", "Vinculo", "Secretaria", 
-                             "Data_Admissao", "Mes", "Ano", "Salario_Base", "Remun_Bruta", 
-                             "Descontos", "Valor_Liquido"]
-        df = df.reindex(columns=colunas_ordenadas)
-        aba.update('A1', [df.columns.values.tolist()] + df.values.tolist())
-    
+    # IMPORTANTE: Usamos valueInputOption='USER_ENTERED' para o Sheets reconhecer o número limpo
+    planilha_google.values_update(
+        f"{nome_aba}!A1",
+        params={'valueInputOption': 'USER_ENTERED'},
+        body={'values': [df.columns.values.tolist()] + df.values.tolist()}
+    )
     return len(df)
 
-def processar_folha_dinamica(servico_id, nome_aba, planilha_google, limite_meses_retrocesso=12):
-    """
-    Tenta baixar dados começando do mês atual.
-    Se falhar, recua 1 mês e tenta de novo, repetindo até o limite (padrão 12 meses).
-    """
-    print(f"\n--- Processando Dinâmico: {nome_aba} (ID {servico_id}) ---")
-    
-    agora = datetime.now()
-    mes_busca = agora.month
-    ano_busca = agora.year
-    
-    for tentativa in range(limite_meses_retrocesso):
-        print(f"🔄 Tentativa {tentativa + 1}/{limite_meses_retrocesso}: Buscando competência {mes_busca}/{ano_busca}...")
-        
-        url = montar_url_rh(servico_id, mes_busca, ano_busca)
-        
-        # Tenta baixar e processar usando o ano da busca como referência
-        qtd = executar_extracao_rh(url, nome_aba, planilha_google, ano_busca)
-        
-        if qtd > 0:
-            print(f"✅ SUCESSO! Dados encontrados em {mes_busca}/{ano_busca} ({qtd} registros).")
-            return qtd
-        
-        print(f"⚠️ Competência {mes_busca}/{ano_busca} vazia. Recuando 1 mês...")
-        
-        # Lógica para voltar 1 mês (tratando virada de ano: Janeiro -> Dezembro do ano anterior)
-        if mes_busca == 1:
-            mes_busca = 12
-            ano_busca -= 1
-        else:
-            mes_busca -= 1
+def montar_url_rh(servico_id, mes, ano):
+    return f"https://agtransparenciarhserviceprd.agapesistemas.com.br/{servico_id}/rh/relatorios/relacao_vinculos_oc?regime=&matricula=&nome=&funcao=&mes={mes}&ano={ano}&total=10000&docType=csv"
 
-    print(f"❌ Falha: Nenhum dado encontrado após {limite_meses_retrocesso} meses de busca retroativa.")
+def processar_folha_dinamica(servico_id, nome_aba, planilha_google, limite_meses_retrocesso=12):
+    print(f"\n--- Iniciando Extração Dinâmica: {nome_aba} ---")
+    agora = datetime.now()
+    mes_busca, ano_busca = agora.month, agora.year
+    for _ in range(limite_meses_retrocesso):
+        url = montar_url_rh(servico_id, mes_busca, ano_busca)
+        qtd = executar_extracao_rh(url, nome_aba, planilha_google, ano_busca)
+        if qtd > 0: return qtd
+        if mes_busca == 1: mes_busca, ano_busca = 12, ano_busca - 1
+        else: mes_busca -= 1
     return 0
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
-    status = {
-        "Conexao": "Pendente",
-        "Emendas": "Pendente",
-        "Receitas": "Pendente",
-        "Folha_Geral": "Pendente",
-        "Folha_Educacao": "Pendente",
-        "Folha_Saude": "Pendente",
-        "Folha_Social": "Pendente"
-    }
+    status = {"Conexao": "Pendente", "Emendas": "Pendente", "Receitas": "Pendente", "Folha_Geral": "Pendente", "Folha_Educacao": "Pendente", "Folha_Saude": "Pendente", "Folha_Social": "Pendente"}
     
     try:
-        try:
-            planilha = conectar_google()
-            status["Conexao"] = "✅ OK"
-        except Exception as e:
-            status["Conexao"] = f"❌ Erro Crítico: {str(e)}"
-            raise e 
+        planilha = conectar_google()
+        status["Conexao"] = "✅ OK"
 
-        # 1. EMENDAS (Estatica)
-        try:
-            qtd = tarefa_emendas(planilha)
-            status["Emendas"] = f"✅ Sucesso ({qtd} linhas)"
-        except Exception as e:
-            status["Emendas"] = f"❌ Erro: {str(e)}"
-
-        # 2. RECEITAS (Estatica)
-        try:
-            qtd = processar_receitas(URL_RECEITAS_FIXO, "Receitas_2025", planilha)
-            status["Receitas"] = f"✅ Sucesso ({qtd} linhas)"
-        except Exception as e:
-            status["Receitas"] = f"❌ Erro: {str(e)}"
-
-        # 3. FOLHA GERAL (Dinâmica - ID 193)
-        try:
-            qtd = processar_folha_dinamica("193", "folha_pagamento_geral", planilha)
-            status["Folha_Geral"] = f"✅ Sucesso ({qtd} servidores)"
-        except Exception as e:
-            status["Folha_Geral"] = f"❌ Falha: {str(e)}"
-
-        # 4. FOLHA EDUCAÇÃO (Dinâmica - ID 350)
-        try:
-            qtd = processar_folha_dinamica("350", "folha_pagamento_educacao", planilha)
-            status["Folha_Educacao"] = f"✅ Sucesso ({qtd} servidores)"
-        except Exception as e:
-            status["Folha_Educacao"] = f"❌ Falha: {str(e)}"
-
-        # 5. FOLHA SAÚDE (Dinâmica - ID 300)
-        try:
-            qtd = processar_folha_dinamica("300", "folha_pagamento_saude", planilha)
-            status["Folha_Saude"] = f"✅ Sucesso ({qtd} servidores)"
-        except Exception as e:
-            status["Folha_Saude"] = f"❌ Falha: {str(e)}"
-
-        # 6. FOLHA ASSISTÊNCIA SOCIAL (Dinâmica - ID 299)
-        try:
-            qtd = processar_folha_dinamica("299", "folha_pagamento_social", planilha)
-            status["Folha_Social"] = f"✅ Sucesso ({qtd} servidores)"
-        except Exception as e:
-            status["Folha_Social"] = f"❌ Falha: {str(e)}"
+        status["Emendas"] = f"✅ {tarefa_emendas(planilha)} linhas"
+        status["Receitas"] = f"✅ {processar_receitas(URL_RECEITAS_FIXO, 'Receitas_2025', planilha)} linhas"
+        
+        folhas = {"193": "folha_pagamento_geral", "350": "folha_pagamento_educacao", 
+                  "300": "folha_pagamento_saude", "299": "folha_pagamento_social"}
+        
+        for srv_id, aba_nome in folhas.items():
+            qtd = processar_folha_dinamica(srv_id, aba_nome, planilha)
+            if srv_id == "193": status["Folha_Geral"] = f"✅ {qtd} servidores"
+            elif srv_id == "350": status["Folha_Educacao"] = f"✅ {qtd} servidores"
+            elif srv_id == "300": status["Folha_Saude"] = f"✅ {qtd} servidores"
+            elif srv_id == "299": status["Folha_Social"] = f"✅ {qtd} servidores"
 
     except Exception as e:
         print(f"Erro fatal: {e}")
-
     finally:
-        assunto = "🤖 Robô Canindé: Relatório Completo"
-        if any("❌" in v for v in status.values()): assunto = "⚠️ Robô Canindé: ALERTA DE ERRO"
-        
-        msg = f"""Status Geral:
-        
-        🔌 Conexão: {status['Conexao']}
-        💰 Emendas: {status['Emendas']}
-        📉 Receitas: {status['Receitas']}
-        👥 Folha Geral: {status['Folha_Geral']}
-        🎓 Folha Educação: {status['Folha_Educacao']}
-        🏥 Folha Saúde: {status['Folha_Saude']}
-        🤝 Folha Social: {status['Folha_Social']}
-        """
+        assunto = "🤖 Robô Canindé: Atualização de Dados"
+        msg = f"Relatório de execução:\n\n" + "\n".join([f"{k}: {v}" for k, v in status.items()])
         enviar_email(assunto, msg)
         print("🏁 Fim.")
